@@ -62,6 +62,18 @@ Use these keys while viewing the fixture:
 - `/` to search for `tokyo-signal`
 - `n` and `N` to move through search matches
 
+### File Path Copy
+
+While viewing a file in `leaf`, press `p` to open the File Path popup:
+
+- press `Shift+R` to copy the relative path
+- press `Shift+A` to copy the absolute path
+- confirm the copy result appears above the shortcuts
+- retry with a long filename so both paths wrap
+- confirm the paths do not move and the popup does not resize
+- wait for the feedback to expire and confirm the row goes blank
+- on copy failure, confirm the popup shows an error message
+
 ### Watch Mode
 
 While running `leaf --watch TESTING.md`:

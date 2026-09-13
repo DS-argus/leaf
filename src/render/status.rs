@@ -248,7 +248,7 @@ fn editor_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
     )])
 }
 
-fn clipboard_hint() -> &'static str {
+pub(super) fn clipboard_hint() -> &'static str {
     match std::env::consts::OS {
         "macos" => " Copy failed: pbcopy not found ",
         "windows" => " Copy failed: clip.exe not found ",

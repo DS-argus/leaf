@@ -24,6 +24,7 @@ const CONFIG_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS)
 const LINK_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
 const CODE_BLOCK_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
 const PATH_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
+const PATH_COPY_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
 const HISTORY_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
 const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 const MOUSE_SCROLL_STEP: usize = 3;
@@ -155,6 +156,9 @@ pub(crate) fn run(
             code_block_flash_timeout,
             app.path_flash()
                 .and_then(|(_, started)| PATH_FLASH_DURATION.checked_sub(started.elapsed())),
+            app.path_copy_flash().and_then(|(_, _, started)| {
+                PATH_COPY_FLASH_DURATION.checked_sub(started.elapsed())
+            }),
             app.history_flash()
                 .and_then(|(_, started)| HISTORY_FLASH_DURATION.checked_sub(started.elapsed())),
             resize_timeout,
@@ -294,6 +298,13 @@ pub(crate) fn run(
         if let Some((_, started)) = app.path_flash() {
             if started.elapsed() >= PATH_FLASH_DURATION {
                 app.clear_path_flash();
+                needs_redraw = true;
+            }
+        }
+
+        if let Some((_, _, started)) = app.path_copy_flash() {
+            if started.elapsed() >= PATH_COPY_FLASH_DURATION {
+                app.clear_path_copy_flash();
                 needs_redraw = true;
             }
         }
