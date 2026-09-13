@@ -167,6 +167,10 @@ impl App {
         self.path_flash = None;
     }
 
+    pub(crate) fn clear_path_copy_flash(&mut self) {
+        self.path_copy_flash = None;
+    }
+
     pub(crate) fn clear_reload_flash(&mut self) {
         self.reload_flash = None;
     }

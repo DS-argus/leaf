@@ -453,20 +453,24 @@ pub(super) fn render_path_popup(f: &mut Frame, app: &mut App) {
             }
         });
 
+    let mut copy_status: Line<'static> = Line::from("");
     if let Some((ref target, success)) = flash_info {
+        let copied_message = match target {
+            PathKind::Relative => "Relative path copied to clipboard",
+            PathKind::Absolute => "Absolute path copied to clipboard",
+        };
         let (label, fg) = if success {
-            (" ✓ copied", theme.ui.status_success_fg)
+            (copied_message, theme.ui.status_success_fg)
         } else {
-            (" ✗ error", theme.ui.status_error_fg)
+            (
+                super::status::clipboard_hint().trim(),
+                theme.ui.status_error_fg,
+            )
         };
-        let style = Style::default().fg(fg).bg(theme.ui.toc_bg);
-        let lines_to_tag = match target {
-            PathKind::Relative => &mut rel_lines,
-            PathKind::Absolute => &mut abs_lines,
-        };
-        if let Some(first_line) = lines_to_tag.first_mut() {
-            first_line.spans.push(Span::styled(label, style));
-        }
+        copy_status = Line::from(Span::styled(
+            label,
+            Style::default().fg(fg).bg(theme.ui.toc_bg),
+        ));
     }
 
     let hover_lines = match app.path_popup_hover {
@@ -503,7 +507,7 @@ pub(super) fn render_path_popup(f: &mut Frame, app: &mut App) {
     lines.push(Line::from(""));
     lines.extend(rel_lines);
     lines.extend(abs_lines);
-    lines.push(Line::from(""));
+    lines.push(copy_status);
     lines.push(popup_footer_line(
         &[
             "shift+r copy-relative",
