@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-version -->
 
+## [[1.28.2](https://github.com/RivoLink/leaf/releases/tag/1.28.2)] - 2026-09-14
+
+### Docs
+
+- commit validation guide ([#267](https://github.com/RivoLink/leaf/pull/267))
+
+### Fixed
+
+- show path copy feedback ([#273](https://github.com/RivoLink/leaf/pull/273))
+- skip startup cursor query ([#264](https://github.com/RivoLink/leaf/pull/264))
+
+### Changed
+
+- ci-check gpg signature ([#269](https://github.com/RivoLink/leaf/pull/269))
+
 ## [[1.28.1](https://github.com/RivoLink/leaf/releases/tag/1.28.1)] - 2026-08-31
 
 ### Changed
