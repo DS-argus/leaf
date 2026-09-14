@@ -190,7 +190,8 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                 }
             }
             CellFragment::LinkMarker(_) => {
-                if current_width + 1 > width && current_width > 0 {
+                let sep = if current_width == 0 { 0 } else { 1 };
+                if current_width + sep + 1 > width && current_width > 0 {
                     lines.push(std::mem::take(&mut current_line));
                     current_width = 0;
                 }
