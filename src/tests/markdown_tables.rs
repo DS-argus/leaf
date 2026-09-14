@@ -211,3 +211,18 @@ fn table_long_inline_code_wraps_without_clipping() {
         "wrapped code must preserve all characters"
     );
 }
+
+#[test]
+fn table_link_after_text_keeps_row_width() {
+    let (ss, theme) = test_assets();
+    let md = "| Name | Link |\n|------|------|\n| foo | x [alpha beta gamma delta epsilon zeta](https://example.com) and [more](https://example.com) |\n| bar | plain text here |\n";
+    let (lines, _, _, _) =
+        parse_markdown_with_width(md, &ss, &theme, 20, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+    let widths: Vec<usize> = rendered.iter().map(|line| display_width(line)).collect();
+
+    assert!(
+        widths.iter().all(|&w| w == widths[0]),
+        "table rows should share one width, got {widths:?}"
+    );
+}
