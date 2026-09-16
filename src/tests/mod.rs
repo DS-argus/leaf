@@ -31,6 +31,7 @@ mod render;
 mod theme;
 mod toc;
 mod update;
+mod wrapping;
 
 pub(super) static THEME_TEST_MUTEX: Mutex<()> = Mutex::new(());
 

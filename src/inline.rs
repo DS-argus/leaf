@@ -139,9 +139,8 @@ fn write_line_ansi<W: Write>(line: &Line<'_>, max_width: usize, writer: &mut W) 
             write_ansi_style(writer, fg, bg, mods)?;
         }
 
-        for ch in span.content.chars() {
-            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if col + ch_width > max_width && col > 0 {
+        for (cluster, cluster_w) in crate::markdown::iter_cluster_widths(&span.content) {
+            if col + cluster_w > max_width && col > 0 {
                 if has_style {
                     write_bytes(writer, b"\x1b[0m")?;
                 }
@@ -151,9 +150,8 @@ fn write_line_ansi<W: Write>(line: &Line<'_>, max_width: usize, writer: &mut W) 
                     write_ansi_style(writer, fg, bg, mods)?;
                 }
             }
-            let mut buf = [0u8; 4];
-            write_bytes(writer, ch.encode_utf8(&mut buf).as_bytes())?;
-            col += ch_width;
+            write_bytes(writer, cluster.as_bytes())?;
+            col += cluster_w;
         }
 
         if has_style {
@@ -167,15 +165,13 @@ fn write_line_ansi<W: Write>(line: &Line<'_>, max_width: usize, writer: &mut W) 
 fn write_line_plain<W: Write>(line: &Line<'_>, max_width: usize, writer: &mut W) -> Result<()> {
     let mut col = 0usize;
     for span in &line.spans {
-        for ch in span.content.chars() {
-            let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if col + ch_width > max_width && col > 0 {
+        for (cluster, cluster_w) in crate::markdown::iter_cluster_widths(&span.content) {
+            if col + cluster_w > max_width && col > 0 {
                 write_bytes(writer, b"\n")?;
                 col = 0;
             }
-            let mut buf = [0u8; 4];
-            write_bytes(writer, ch.encode_utf8(&mut buf).as_bytes())?;
-            col += ch_width;
+            write_bytes(writer, cluster.as_bytes())?;
+            col += cluster_w;
         }
     }
     write_bytes(writer, b"\n")?;

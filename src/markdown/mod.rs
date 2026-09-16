@@ -22,7 +22,9 @@ pub(crate) use syntax::resolve_syntax;
 use tables::{handle_table_event, start_table, TableBuf};
 #[cfg(test)]
 pub(crate) use width::line_plain_text;
-pub(crate) use width::{build_searchable_lines, display_width, truncate_display_width};
+pub(crate) use width::{
+    build_searchable_lines, display_width, iter_cluster_widths, truncate_display_width,
+};
 
 use crate::theme::MarkdownTheme;
 use pulldown_cmark::{

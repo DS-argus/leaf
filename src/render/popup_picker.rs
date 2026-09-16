@@ -274,7 +274,9 @@ pub(super) fn render_picker_loading_popup(f: &mut Frame, app: &mut App) {
 }
 
 fn truncate_middle(path: &str, max_width: usize) -> String {
-    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    use crate::markdown::iter_cluster_widths;
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
     let total = UnicodeWidthStr::width(path);
     if total <= max_width || max_width <= 3 {
         return path.to_string();
@@ -286,26 +288,25 @@ fn truncate_middle(path: &str, max_width: usize) -> String {
 
     let mut left = String::new();
     let mut left_width = 0usize;
-    for ch in path.chars() {
-        let w = ch.width().unwrap_or(0);
+    for (cluster, w) in iter_cluster_widths(path) {
         if left_width + w > left_budget {
             break;
         }
-        left.push(ch);
+        left.push_str(cluster);
         left_width += w;
     }
 
-    let mut right_stack: Vec<char> = Vec::new();
+    let mut right_clusters: Vec<&str> = Vec::new();
     let mut right_width = 0usize;
-    for ch in path.chars().rev() {
-        let w = ch.width().unwrap_or(0);
+    for cluster in path.graphemes(true).rev() {
+        let w = UnicodeWidthStr::width(cluster);
         if right_width + w > right_budget {
             break;
         }
-        right_stack.push(ch);
+        right_clusters.push(cluster);
         right_width += w;
     }
-    let right: String = right_stack.into_iter().rev().collect();
+    let right: String = right_clusters.into_iter().rev().collect();
     format!("{left}{ellipsis}{right}")
 }
 

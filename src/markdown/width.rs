@@ -1,5 +1,6 @@
 use ratatui::text::Line;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) const TAB_STOP: usize = 4;
 
@@ -78,16 +79,19 @@ pub(crate) fn truncate_display_width(text: &str, max_width: usize) -> String {
 
     let mut out = String::new();
     let mut used = 0;
-    for ch in text.chars() {
-        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + ch_w > max_width.saturating_sub(1) {
+    for (cluster, cluster_w) in iter_cluster_widths(text) {
+        if used + cluster_w > max_width.saturating_sub(1) {
             break;
         }
-        out.push(ch);
-        used += ch_w;
+        out.push_str(cluster);
+        used += cluster_w;
     }
     out.push('\u{2026}');
     out
+}
+
+pub(crate) fn iter_cluster_widths(text: &str) -> impl Iterator<Item = (&str, usize)> {
+    text.graphemes(true).map(|g| (g, UnicodeWidthStr::width(g)))
 }
 
 pub(crate) fn display_width(text: &str) -> usize {

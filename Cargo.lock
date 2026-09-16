@@ -1061,6 +1061,7 @@ dependencies = [
  "sha2",
  "syntect",
  "toml",
+ "unicode-segmentation",
  "unicode-width",
  "unicodeit",
 ]
