@@ -1,9 +1,8 @@
-use super::width::display_width;
+use super::width::{display_width, iter_cluster_widths};
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use unicode_width::UnicodeWidthChar;
 
 pub(super) fn push_wrapped_prefixed_lines(
     lines: &mut Vec<Line<'static>>,
@@ -106,12 +105,11 @@ pub(super) fn push_wrapped_prefixed_lines(
 
             let mut chunk = String::new();
             let mut chunk_width = 0usize;
-            for ch in token.chars() {
-                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            for (cluster, cluster_w) in iter_cluster_widths(token) {
                 let would_overflow = if *body_started {
-                    *current_width + chunk_width + ch_width > max_width
+                    *current_width + chunk_width + cluster_w > max_width
                 } else {
-                    chunk_width + ch_width > max_width
+                    chunk_width + cluster_w > max_width
                 };
                 if would_overflow {
                     if !chunk.is_empty() {
@@ -128,8 +126,8 @@ pub(super) fn push_wrapped_prefixed_lines(
                     chunk_width = 0;
                 }
 
-                chunk.push(ch);
-                chunk_width += ch_width;
+                chunk.push_str(cluster);
+                chunk_width += cluster_w;
             }
 
             if !chunk.is_empty() {
@@ -181,15 +179,15 @@ pub(super) fn push_wrapped_code_lines(
     suffix_style: Style,
     available_content_width: usize,
 ) {
-    let mut chars: Vec<(char, Style)> = Vec::new();
+    let mut clusters: Vec<(String, usize, Style)> = Vec::new();
     for span in &content_spans {
         let style = span.style;
-        for ch in span.content.chars() {
-            chars.push((ch, style));
+        for (cluster, cluster_w) in iter_cluster_widths(&span.content) {
+            clusters.push((cluster.to_string(), cluster_w, style));
         }
     }
 
-    if chars.is_empty() {
+    if clusters.is_empty() {
         let pad = " ".repeat(available_content_width + 1);
         let mut row = first_prefix;
         row.push(Span::raw(format!(" {pad}")));
@@ -202,22 +200,20 @@ pub(super) fn push_wrapped_code_lines(
     let mut pos = 0;
     let mut first_prefix = Some(first_prefix);
 
-    while pos < chars.len() {
+    while pos < clusters.len() {
         let prefix = first_prefix
             .take()
             .unwrap_or_else(|| continuation_prefix.clone());
 
-        let mut row_chars: Vec<(char, Style)> = Vec::new();
+        let row_start = pos;
         let mut row_width = 0;
 
-        while pos < chars.len() {
-            let (ch, st) = chars[pos];
-            let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-            if row_width + ch_w > max_w && row_width > 0 {
+        while pos < clusters.len() {
+            let cluster_w = clusters[pos].1;
+            if row_width + cluster_w > max_w && row_width > 0 {
                 break;
             }
-            row_chars.push((ch, st));
-            row_width += ch_w;
+            row_width += cluster_w;
             pos += 1;
         }
 
@@ -226,9 +222,9 @@ pub(super) fn push_wrapped_code_lines(
 
         let mut current_style: Option<Style> = None;
         let mut current_text = String::new();
-        for (ch, st) in &row_chars {
+        for (cluster, _, st) in &clusters[row_start..pos] {
             if current_style == Some(*st) {
-                current_text.push(*ch);
+                current_text.push_str(cluster);
             } else {
                 if !current_text.is_empty() {
                     row.push(Span::styled(
@@ -237,7 +233,7 @@ pub(super) fn push_wrapped_code_lines(
                     ));
                 }
                 current_style = Some(*st);
-                current_text.push(*ch);
+                current_text.push_str(cluster);
             }
         }
         if !current_text.is_empty() {

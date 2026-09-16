@@ -2,10 +2,9 @@ use ratatui::{
     style::{Modifier, Style},
     text::Span,
 };
-use unicode_width::UnicodeWidthChar;
 
 use super::tables::{CellFragment, CellInlineStyle};
-use super::width::{display_width, expand_tabs};
+use super::width::{display_width, expand_tabs, iter_cluster_widths};
 use super::LINK_MARKER;
 
 pub(super) fn fragments_display_width(frags: &[CellFragment]) -> usize {
@@ -153,9 +152,8 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                         first_word = false;
                         let mut chunk = String::new();
                         let mut chunk_width = 0usize;
-                        for ch in word.chars() {
-                            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-                            if chunk_width + ch_width > width && !chunk.is_empty() {
+                        for (cluster, cluster_w) in iter_cluster_widths(word) {
+                            if chunk_width + cluster_w > width && !chunk.is_empty() {
                                 lines.push(vec![CellFragment::Text(
                                     std::mem::take(&mut chunk),
                                     style,
@@ -163,8 +161,8 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                                 )]);
                                 chunk_width = 0;
                             }
-                            chunk.push(ch);
-                            chunk_width += ch_width;
+                            chunk.push_str(cluster);
+                            chunk_width += cluster_w;
                         }
                         if !chunk.is_empty() {
                             current_line.push(CellFragment::Text(chunk, style, false));
@@ -219,14 +217,13 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                     let inner = width.saturating_sub(2).max(1);
                     let mut chunk = String::new();
                     let mut chunk_width = 0usize;
-                    for ch in text.chars() {
-                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-                        if chunk_width + ch_width > inner && !chunk.is_empty() {
+                    for (cluster, cluster_w) in iter_cluster_widths(&text) {
+                        if chunk_width + cluster_w > inner && !chunk.is_empty() {
                             lines.push(vec![rebuild_fragment(frag, std::mem::take(&mut chunk))]);
                             chunk_width = 0;
                         }
-                        chunk.push(ch);
-                        chunk_width += ch_width;
+                        chunk.push_str(cluster);
+                        chunk_width += cluster_w;
                     }
                     if !chunk.is_empty() {
                         current_line.push(rebuild_fragment(frag, chunk));

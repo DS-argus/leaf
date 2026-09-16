@@ -353,3 +353,45 @@ fn write_lines_ansi_handles_modifiers() {
     let output = String::from_utf8(buf).unwrap();
     assert!(output.contains("1;3m") || output.contains("1m") && output.contains("3m"));
 }
+
+#[test]
+fn write_lines_plain_wraps_at_cluster_boundary_for_vs16() {
+    use ratatui::text::{Line, Span};
+
+    let content = "aaaaa 🍀️ bbbbb";
+    let lines = vec![Line::from(vec![Span::raw(content)])];
+    let mut buf = Vec::new();
+    inline::write_lines(&lines, ResolvedFormat::Plain, 8, &mut buf).unwrap();
+    let output = String::from_utf8(buf).unwrap();
+
+    for row in output.lines() {
+        let width: usize = crate::markdown::display_width(row);
+        assert!(width <= 8, "row wider than 8: {row:?} width={width}");
+    }
+    let joined: String = output.replace('\n', "");
+    assert!(
+        joined.contains("🍀\u{FE0F}"),
+        "VS16 cluster should be preserved intact in the output"
+    );
+}
+
+#[test]
+fn write_lines_ansi_wraps_at_cluster_boundary_for_vs16() {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+
+    let content = "aaaaa 🍀️ bbbbb";
+    let lines = vec![Line::from(vec![Span::styled(
+        content,
+        Style::default().add_modifier(Modifier::BOLD),
+    )])];
+    let mut buf = Vec::new();
+    inline::write_lines(&lines, ResolvedFormat::Ansi, 8, &mut buf).unwrap();
+    let output = String::from_utf8(buf).unwrap();
+
+    let joined: String = output.replace('\n', "");
+    assert!(
+        joined.contains("🍀\u{FE0F}"),
+        "VS16 cluster should be preserved intact in the ANSI output"
+    );
+}
