@@ -32,24 +32,32 @@ struct MarkerMatch<'a> {
     marker: &'a CustomMarker,
 }
 
+fn find_valid_match<'a>(text: &str, marker: &'a CustomMarker) -> Option<MarkerMatch<'a>> {
+    for (open_pos, _) in text.match_indices(marker.open) {
+        let after_open = open_pos + marker.open.len();
+        let close_rel = text[after_open..].find(marker.close)?;
+        if is_valid_content(&text[after_open..after_open + close_rel]) {
+            return Some(MarkerMatch {
+                open_pos,
+                close_rel,
+                marker,
+            });
+        }
+    }
+
+    None
+}
+
 fn find_first_marker<'a>(text: &str, markers: &'a [CustomMarker]) -> Option<MarkerMatch<'a>> {
     let mut best: Option<MarkerMatch<'a>> = None;
 
     for marker in markers {
-        if let Some(open_pos) = text.find(marker.open) {
-            let after_open = open_pos + marker.open.len();
-            if let Some(close_rel) = text[after_open..].find(marker.close) {
-                let content = &text[after_open..after_open + close_rel];
-                if is_valid_content(content) {
-                    let dominated = best.as_ref().is_some_and(|b| b.open_pos <= open_pos);
-                    if !dominated {
-                        best = Some(MarkerMatch {
-                            open_pos,
-                            close_rel,
-                            marker,
-                        });
-                    }
-                }
+        if let Some(candidate) = find_valid_match(text, marker) {
+            let dominated = best
+                .as_ref()
+                .is_some_and(|b| b.open_pos <= candidate.open_pos);
+            if !dominated {
+                best = Some(candidate);
             }
         }
     }
@@ -196,6 +204,26 @@ mod tests {
         let spans = collect("== text ==", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].content.as_ref(), "== text ==");
+    }
+
+    #[test]
+    fn mark_after_invalid_pair_is_still_marked() {
+        let theme = test_theme();
+        let spans = collect("x == y and ==marked== end", &[MARK_MARKER], &theme);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content.as_ref(), "x == y and ");
+        assert_eq!(spans[1].content.as_ref(), " marked ");
+        assert!(spans[1].style.bg.is_some());
+        assert_eq!(spans[2].content.as_ref(), " end");
+    }
+
+    #[test]
+    fn split_segments_mark_after_invalid_pair() {
+        let segs = split_marker_segments("x == y and ==marked== end", &[MARK_MARKER]);
+        assert_eq!(segs.len(), 3);
+        assert!(matches!(segs[0], MarkerSegment::Text("x == y and ")));
+        assert!(matches!(segs[1], MarkerSegment::Mark("marked")));
+        assert!(matches!(segs[2], MarkerSegment::Text(" end")));
     }
 
     #[test]
