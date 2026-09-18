@@ -307,20 +307,85 @@ fn new_tab_command_apple_terminal_file_with_spaces() {
 
 #[test]
 fn resolve_editor_cli_takes_priority() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::remove_var("EDITOR");
     let result = resolve_editor(Some("vim"), None);
     assert_eq!(result, "vim");
 }
 
 #[test]
 fn resolve_editor_fallback_is_not_empty() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::remove_var("EDITOR");
     let result = resolve_editor(None, None);
     assert!(!result.is_empty());
 }
 
 #[test]
 fn resolve_editor_config_takes_priority_over_fallback() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::remove_var("EDITOR");
     let result = resolve_editor(None, Some("hx"));
     assert_eq!(result, "hx");
+}
+
+#[test]
+fn resolve_editor_env_editor_used_when_others_absent() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::set_var("EDITOR", "vim");
+    let result = resolve_editor(None, None);
+    std::env::remove_var("EDITOR");
+    assert_eq!(result, "vim");
+}
+
+#[test]
+fn resolve_editor_config_takes_priority_over_env_editor() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::set_var("EDITOR", "vim");
+    let result = resolve_editor(None, Some("hx"));
+    std::env::remove_var("EDITOR");
+    assert_eq!(result, "hx");
+}
+
+#[test]
+fn resolve_editor_env_editor_empty_falls_back_to_platform() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::set_var("EDITOR", "");
+    let result = resolve_editor(None, None);
+    std::env::remove_var("EDITOR");
+    let expected = if cfg!(target_os = "windows") {
+        "notepad"
+    } else {
+        "nano"
+    };
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn resolve_editor_leaf_editor_takes_priority_over_env_editor() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::set_var("LEAF_EDITOR", "nvim");
+    std::env::set_var("EDITOR", "vim");
+    let result = resolve_editor(None, None);
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::remove_var("EDITOR");
+    assert_eq!(result, "nvim");
+}
+
+#[test]
+fn resolve_editor_cli_takes_priority_over_env_editor() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_EDITOR");
+    std::env::set_var("EDITOR", "vim");
+    let result = resolve_editor(Some("code"), None);
+    std::env::remove_var("EDITOR");
+    assert_eq!(result, "code");
 }
 
 #[test]

@@ -248,6 +248,8 @@ pub(crate) fn resolve_editor(cli_editor: Option<&str>, config_editor: Option<&st
         e
     } else if let Some(e) = config_editor {
         e.to_string()
+    } else if let Some(e) = std::env::var("EDITOR").ok().filter(|s| !s.is_empty()) {
+        e
     } else {
         platform_fallback_editor().to_string()
     };
