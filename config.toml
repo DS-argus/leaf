@@ -43,7 +43,7 @@ theme = "ocean"
 # Also, {$path} offers more customization options:
 # editor = 'code -g {$path}:{$line}'
 #
-# Priority: --editor flag > LEAF_EDITOR > this setting > nano (notepad on Windows)
+# Priority: --editor flag > LEAF_EDITOR > this setting > EDITOR > nano (notepad on Windows)
 # editor = "nano"
 
 # Maximum content width (number of columns)
