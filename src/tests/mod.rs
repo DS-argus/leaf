@@ -22,6 +22,7 @@ mod inline;
 mod markdown_blocks;
 mod markdown_embedded;
 mod markdown_footnotes;
+mod markdown_html_tag;
 mod markdown_links;
 mod markdown_list_blocks;
 mod markdown_lists;

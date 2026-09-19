@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use super::latex;
+use super::spans::{normalize_html_tag, HtmlBufferKind, HtmlTagName, HtmlTagOutcome};
 use super::table_layout::{
     align_cell, cap_table_widths, fit_table_widths, fragments_display_width, min_table_cell_width,
     wrap_table_cell,
@@ -14,23 +15,27 @@ use super::width::display_width;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct CellInlineStyle {
-    pub(super) bold: bool,
-    pub(super) italic: bool,
-    pub(super) strikethrough: bool,
+    pub(super) bold: u8,
+    pub(super) italic: u8,
+    pub(super) strikethrough: u8,
+    pub(super) underline: u8,
     pub(super) link: bool,
 }
 
 impl CellInlineStyle {
     pub(super) fn modifiers(&self) -> Modifier {
         let mut m = Modifier::empty();
-        if self.bold {
+        if self.bold > 0 {
             m |= Modifier::BOLD;
         }
-        if self.italic {
+        if self.italic > 0 {
             m |= Modifier::ITALIC;
         }
-        if self.strikethrough {
+        if self.strikethrough > 0 {
             m |= Modifier::CROSSED_OUT;
+        }
+        if self.underline > 0 {
+            m |= Modifier::UNDERLINED;
         }
         m
     }
@@ -43,6 +48,7 @@ pub(super) enum CellFragment {
     InlineMath(String, bool),
     LinkMarker(CellInlineStyle),
     Mark(String, bool),
+    HardBreak,
 }
 
 impl CellFragment {
@@ -53,6 +59,7 @@ impl CellFragment {
             }
             CellFragment::InlineMath(t, _) => latex::to_unicode(t),
             CellFragment::LinkMarker(_) => super::LINK_MARKER.to_string(),
+            CellFragment::HardBreak => String::new(),
         }
     }
 
@@ -60,6 +67,7 @@ impl CellFragment {
         let w = display_width(&self.rendered_text());
         match self {
             CellFragment::Text(_, _, _) | CellFragment::LinkMarker(_) => w,
+            CellFragment::HardBreak => 0,
             _ => w + 2,
         }
     }
@@ -77,6 +85,7 @@ pub(super) struct TableBuf {
     current_cell: Vec<CellFragment>,
     pub(super) in_header: bool,
     inline_style: CellInlineStyle,
+    html_style_buffer: Option<(HtmlBufferKind, String)>,
     key_column: Option<usize>,
     fill_width: bool,
 }
@@ -131,36 +140,38 @@ pub(super) fn handle_table_event(
             true
         }
         MdEvent::Start(Tag::Strong) => {
-            tb.inline_style.bold = true;
+            tb.inline_style.bold = tb.inline_style.bold.saturating_add(1);
             if tb.inline_style.link {
-                tb.update_link_marker_modifier(|s| s.bold = true);
+                tb.update_link_marker_modifier(|s| s.bold = s.bold.saturating_add(1));
             }
             true
         }
         MdEvent::End(TagEnd::Strong) => {
-            tb.inline_style.bold = false;
+            tb.inline_style.bold = tb.inline_style.bold.saturating_sub(1);
             true
         }
         MdEvent::Start(Tag::Emphasis) => {
-            tb.inline_style.italic = true;
+            tb.inline_style.italic = tb.inline_style.italic.saturating_add(1);
             if tb.inline_style.link {
-                tb.update_link_marker_modifier(|s| s.italic = true);
+                tb.update_link_marker_modifier(|s| s.italic = s.italic.saturating_add(1));
             }
             true
         }
         MdEvent::End(TagEnd::Emphasis) => {
-            tb.inline_style.italic = false;
+            tb.inline_style.italic = tb.inline_style.italic.saturating_sub(1);
             true
         }
         MdEvent::Start(Tag::Strikethrough) => {
-            tb.inline_style.strikethrough = true;
+            tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_add(1);
             if tb.inline_style.link {
-                tb.update_link_marker_modifier(|s| s.strikethrough = true);
+                tb.update_link_marker_modifier(|s| {
+                    s.strikethrough = s.strikethrough.saturating_add(1)
+                });
             }
             true
         }
         MdEvent::End(TagEnd::Strikethrough) => {
-            tb.inline_style.strikethrough = false;
+            tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_sub(1);
             true
         }
         MdEvent::Start(Tag::Link { dest_url, .. }) => {
@@ -171,6 +182,29 @@ pub(super) fn handle_table_event(
         }
         MdEvent::End(TagEnd::Link) => {
             tb.inline_style.link = false;
+            true
+        }
+        MdEvent::InlineHtml(raw) => {
+            match handle_html_tag_event_cell(raw.as_ref(), tb) {
+                HtmlTagOutcome::Consumed => {}
+                HtmlTagOutcome::OpenStyleBuffer(kind) => {
+                    if tb.html_style_buffer.is_none() {
+                        tb.html_style_buffer = Some((kind, String::new()));
+                    }
+                }
+                HtmlTagOutcome::CloseStyleBuffer(kind) => {
+                    if matches!(&tb.html_style_buffer, Some((k, _)) if *k == kind) {
+                        tb.flush_html_style_buffer();
+                    }
+                }
+                HtmlTagOutcome::HardBreak => {
+                    tb.flush_html_style_buffer();
+                    tb.push_hard_break();
+                }
+                HtmlTagOutcome::NotRecognized => {
+                    tb.push_text(raw.as_ref());
+                }
+            }
             true
         }
         MdEvent::End(TagEnd::Table) => {
@@ -187,6 +221,62 @@ pub(super) fn start_table(table: &mut Option<TableBuf>, aligns: &[Alignment]) {
     *table = Some(TableBuf::new(aligns.to_vec()));
 }
 
+pub(super) fn handle_html_tag_event_cell(raw: &str, tb: &mut TableBuf) -> HtmlTagOutcome {
+    let Some((tag, is_open)) = normalize_html_tag(raw) else {
+        return HtmlTagOutcome::NotRecognized;
+    };
+    match (tag, is_open) {
+        (HtmlTagName::Bold, true) => {
+            tb.inline_style.bold = tb.inline_style.bold.saturating_add(1);
+            if tb.inline_style.link {
+                tb.update_link_marker_modifier(|s| s.bold = s.bold.saturating_add(1));
+            }
+        }
+        (HtmlTagName::Bold, false) => {
+            tb.inline_style.bold = tb.inline_style.bold.saturating_sub(1);
+        }
+        (HtmlTagName::Italic, true) => {
+            tb.inline_style.italic = tb.inline_style.italic.saturating_add(1);
+            if tb.inline_style.link {
+                tb.update_link_marker_modifier(|s| s.italic = s.italic.saturating_add(1));
+            }
+        }
+        (HtmlTagName::Italic, false) => {
+            tb.inline_style.italic = tb.inline_style.italic.saturating_sub(1);
+        }
+        (HtmlTagName::Strike, true) => {
+            tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_add(1);
+            if tb.inline_style.link {
+                tb.update_link_marker_modifier(|s| {
+                    s.strikethrough = s.strikethrough.saturating_add(1)
+                });
+            }
+        }
+        (HtmlTagName::Strike, false) => {
+            tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_sub(1);
+        }
+        (HtmlTagName::Underline, true) => {
+            tb.inline_style.underline = tb.inline_style.underline.saturating_add(1);
+            if tb.inline_style.link {
+                tb.update_link_marker_modifier(|s| s.underline = s.underline.saturating_add(1));
+            }
+        }
+        (HtmlTagName::Underline, false) => {
+            tb.inline_style.underline = tb.inline_style.underline.saturating_sub(1);
+        }
+        (HtmlTagName::Mark, true) => return HtmlTagOutcome::OpenStyleBuffer(HtmlBufferKind::Mark),
+        (HtmlTagName::Mark, false) => {
+            return HtmlTagOutcome::CloseStyleBuffer(HtmlBufferKind::Mark)
+        }
+        (HtmlTagName::Code, true) => return HtmlTagOutcome::OpenStyleBuffer(HtmlBufferKind::Code),
+        (HtmlTagName::Code, false) => {
+            return HtmlTagOutcome::CloseStyleBuffer(HtmlBufferKind::Code)
+        }
+        (HtmlTagName::Br, _) => return HtmlTagOutcome::HardBreak,
+    }
+    HtmlTagOutcome::Consumed
+}
+
 impl TableBuf {
     fn new(alignments: Vec<Alignment>) -> Self {
         Self {
@@ -197,6 +287,7 @@ impl TableBuf {
             current_cell: vec![],
             in_header: false,
             inline_style: CellInlineStyle::default(),
+            html_style_buffer: None,
             key_column: None,
             fill_width: false,
         }
@@ -223,6 +314,7 @@ impl TableBuf {
                 current_cell: vec![],
                 in_header: false,
                 inline_style: style,
+                html_style_buffer: None,
                 key_column: Some(0),
                 fill_width: true,
             }
@@ -244,6 +336,7 @@ impl TableBuf {
                 current_cell: vec![],
                 in_header: false,
                 inline_style: style,
+                html_style_buffer: None,
                 key_column: None,
                 fill_width: true,
             }
@@ -258,6 +351,11 @@ impl TableBuf {
     }
     fn push_text(&mut self, t: &str) {
         use super::markers::{split_marker_segments, MarkerSegment, MARK_MARKER};
+
+        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+            buf.push_str(t);
+            return;
+        }
 
         let starts_no_ws = !t.is_empty() && !t.starts_with(char::is_whitespace);
         let adjacent = starts_no_ws && self.prev_ends_without_ws();
@@ -295,16 +393,41 @@ impl TableBuf {
         }
     }
     fn push_code(&mut self, t: &str) {
+        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+            buf.push_str(t);
+            return;
+        }
         let adjacent = self.prev_ends_without_ws();
         self.current_cell
             .push(CellFragment::Code(t.to_string(), adjacent));
     }
     fn push_inline_math(&mut self, t: &str) {
+        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+            buf.push_str(t);
+            return;
+        }
         let adjacent = self.prev_ends_without_ws();
         self.current_cell
             .push(CellFragment::InlineMath(t.to_string(), adjacent));
     }
+    fn flush_html_style_buffer(&mut self) {
+        if let Some((kind, text)) = self.html_style_buffer.take() {
+            let adjacent = self.prev_ends_without_ws();
+            match kind {
+                HtmlBufferKind::Mark => {
+                    self.current_cell.push(CellFragment::Mark(text, adjacent));
+                }
+                HtmlBufferKind::Code => {
+                    self.current_cell.push(CellFragment::Code(text, adjacent));
+                }
+            }
+        }
+    }
+    fn push_hard_break(&mut self) {
+        self.current_cell.push(CellFragment::HardBreak);
+    }
     fn end_cell(&mut self) {
+        self.flush_html_style_buffer();
         let mut frags = std::mem::take(&mut self.current_cell);
         if let Some(CellFragment::Text(t, _, _)) = frags.first_mut() {
             *t = t.trim_start().to_string();

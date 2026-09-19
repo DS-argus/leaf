@@ -180,7 +180,11 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                         lines.push(std::mem::take(&mut current_line));
                         current_width = 0;
                     } else if needs_sep {
-                        current_line.push(CellFragment::Text(" ".to_string(), style, false));
+                        current_line.push(CellFragment::Text(
+                            " ".to_string(),
+                            CellInlineStyle::default(),
+                            false,
+                        ));
                         current_width += 1;
                     }
                     current_line.push(CellFragment::Text(word.to_string(), style, false));
@@ -200,6 +204,11 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                 current_line.push(frag.clone());
                 current_width += 1;
                 glue = true;
+            }
+            CellFragment::HardBreak => {
+                lines.push(std::mem::take(&mut current_line));
+                current_width = 0;
+                glue = false;
             }
             CellFragment::Code(_, adj)
             | CellFragment::InlineMath(_, adj)
@@ -273,17 +282,20 @@ pub(super) fn align_cell(
                 let expanded = expand_tabs(t, 0);
                 content_width += display_width(&expanded);
                 let mut style = base_style;
-                if inline.bold {
+                if inline.bold > 0 {
                     style = style.add_modifier(Modifier::BOLD);
                     if !is_header {
                         style = style.fg(theme.strong_text);
                     }
                 }
-                if inline.italic {
+                if inline.italic > 0 {
                     style = style.add_modifier(Modifier::ITALIC);
                 }
-                if inline.strikethrough {
+                if inline.strikethrough > 0 {
                     style = style.add_modifier(Modifier::CROSSED_OUT);
+                }
+                if inline.underline > 0 {
+                    style = style.add_modifier(Modifier::UNDERLINED);
                 }
                 if inline.link {
                     style = style.fg(theme.link_text).add_modifier(Modifier::UNDERLINED);
@@ -297,6 +309,7 @@ pub(super) fn align_cell(
                 spans.push(Span::styled(LINK_MARKER, style));
                 content_width += display_width(LINK_MARKER);
             }
+            CellFragment::HardBreak => {}
             CellFragment::Code(_, _)
             | CellFragment::InlineMath(_, _)
             | CellFragment::Mark(_, _) => {

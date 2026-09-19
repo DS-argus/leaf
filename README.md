@@ -348,6 +348,7 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 - **Frontmatter support** : *YAML frontmatter rendered as a table (horizontal or vertical based on key count)*.
 - **Rich Markdown rendering** : *Tables, lists, blockquotes, rules, bold, italic, and strikethrough*.
 - **GitHub extras** : *Alert callouts, task list checkboxes, and `==mark==` text highlighting*.
+- **Inline HTML tags** : *Common inline formatting tags (`<b>`, `<i>`, `<u>`, ...) rendered with proper styling*.
 - **Extra file types** : *Open any file; code files get syntax highlighting, text files render as Markdown*.
 - **Syntax highlighting** : *Common aliases like `py`, `cpp`, `json`, `toml`, `ps1`, `dockerfile`*.
 - **Line numbers** : *Toggle display with `Shift+L`, jump to a line with `Ctrl+L` or `:`*.
