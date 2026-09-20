@@ -57,6 +57,8 @@ pub(crate) use read_stdin_limited as read_stdin_with_limit;
 #[cfg(test)]
 pub(crate) use render::wrap_path_lines;
 #[cfg(test)]
+pub(crate) use resolve_main_line_numbers as test_resolve_main_line_numbers;
+#[cfg(test)]
 pub(crate) use resolve_tab_title_length_n as test_resolve_tab_title_length_n;
 #[cfg(test)]
 pub(crate) use runtime::should_handle_key;
@@ -106,6 +108,17 @@ fn resolve_configured_width(
         }
     }
     config_width.map(|w| w.max(20))
+}
+
+fn resolve_main_line_numbers(config_value: Option<bool>) -> bool {
+    if let Ok(val) = std::env::var("LEAF_MAIN_LINE_NUMBERS") {
+        match val.as_str() {
+            "1" => return true,
+            "0" => return false,
+            _ => {}
+        }
+    }
+    config_value.unwrap_or(false)
 }
 
 fn resolve_code_line_numbers(config_value: Option<bool>) -> bool {
@@ -278,6 +291,7 @@ fn main() -> Result<()> {
 
     let watch_from_config = user_config.watch.unwrap_or(false);
     let max_width = resolve_configured_width(cli_width, user_config.width);
+    let main_line_numbers = resolve_main_line_numbers(user_config.main_line_numbers);
     let code_line_numbers = resolve_code_line_numbers(user_config.code_line_numbers);
     let tab_title_length = resolve_tab_title_length_n(user_config.tab_title_length);
     let tab_title_max_filename_len = tab_title_length.and_then(tab_title_n_to_max_filename_len);
@@ -502,6 +516,7 @@ fn main() -> Result<()> {
     app.set_extras(user_config.extras);
     app.set_file_mode(file_mode);
     app.set_editor_config(Some(resolved_editor));
+    app.set_line_numbers_visible(main_line_numbers);
     app.set_code_line_numbers(code_line_numbers);
     app.set_config_warning(config_warning);
     if let Some(dir) = dir_arg {

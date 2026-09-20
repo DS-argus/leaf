@@ -77,6 +77,13 @@ watch = false
 # Default: "78cells"
 # file-picker-width = "78cells"
 
+# Show line numbers in the main document by default
+# Can still be toggled interactively with 'l' or 'Shift+L'.
+# Priority: LEAF_MAIN_LINE_NUMBERS > this setting > default (false)
+# Accepted env values: 1 = true, 0 = false (other values ignored)
+# Default: false
+# main-line-numbers = false
+
 # Show line numbers inside fenced code blocks
 # Only affects code block gutters, the main document line numbers are independent.
 # Priority: LEAF_CODE_LINE_NUMBERS > this setting > default (true)

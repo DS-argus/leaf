@@ -873,3 +873,50 @@ fn load_path_activates_watch_from_config() {
     let _ = fs::remove_file(path);
     let _ = fs::remove_file(path2);
 }
+
+#[test]
+fn main_line_numbers_config_initializes_and_preserves_across_load_path() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path1 = std::env::temp_dir().join(format!("leaf-line-numbers-1-{unique}.md"));
+    let path2 = std::env::temp_dir().join(format!("leaf-line-numbers-2-{unique}.md"));
+    fs::write(&path1, "# File 1\nLine 1\n").unwrap();
+    fs::write(&path2, "# File 2\nLine 2\n").unwrap();
+
+    let mut app = App::new_with_source(
+        Vec::new(),
+        Vec::new(),
+        AppConfig {
+            filename: "demo".to_string(),
+            source: String::new(),
+            debug_input: false,
+            watch: false,
+            filepath: None,
+            last_file_state: None,
+        },
+    );
+
+    assert!(!app.is_line_number_visible());
+
+    app.set_line_numbers_visible(true);
+    assert!(app.is_line_number_visible());
+
+    assert!(app.load_path(path1.clone(), &ss, &ts));
+    assert!(app.is_line_number_visible());
+
+    app.toggle_line_numbers();
+    assert!(!app.is_line_number_visible());
+
+    assert!(app.load_path(path2.clone(), &ss, &ts));
+    assert!(!app.is_line_number_visible());
+
+    app.toggle_line_numbers();
+    assert!(app.is_line_number_visible());
+
+    let _ = fs::remove_file(path1);
+    let _ = fs::remove_file(path2);
+}

@@ -232,6 +232,7 @@ watch = false              # auto-reload when opening a file
 width = 80                 # maximum content width (min: 20, default: terminal width)
 extras = ["txt", "rs"]     # extra file types shown in the picker
 file-picker-width = "75%"  # width of the file picker (fuzzy + file browser)
+main-line-numbers = false  # show line numbers in the main document by default
 code-line-numbers = true   # show line numbers inside fenced code blocks
 tab-title-length = -1      # terminal tab title truncation (min: 20, -1: no truncation)
 file-history-length = 0    # recent file history length (0 disables, max: 50)
