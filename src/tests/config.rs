@@ -276,3 +276,50 @@ fn resolve_tab_title_length_n_env_invalid_falls_back_to_config() {
     std::env::remove_var("LEAF_TAB_TITLE_LENGTH");
     assert_eq!(result, Some(30));
 }
+
+#[test]
+fn parse_main_line_numbers_true() {
+    let toml = r#"main-line-numbers = true"#;
+    let config: LeafConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.main_line_numbers, Some(true));
+}
+
+#[test]
+fn parse_main_line_numbers_false() {
+    let toml = r#"main-line-numbers = false"#;
+    let config: LeafConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.main_line_numbers, Some(false));
+}
+
+#[test]
+fn parse_main_line_numbers_missing_defaults_to_none() {
+    let toml = r#"theme = "ocean""#;
+    let config: LeafConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.main_line_numbers, None);
+}
+
+#[test]
+fn resolve_main_line_numbers_default_false() {
+    std::env::remove_var("LEAF_MAIN_LINE_NUMBERS");
+    assert!(!test_resolve_main_line_numbers(None));
+}
+
+#[test]
+fn resolve_main_line_numbers_config_value() {
+    std::env::remove_var("LEAF_MAIN_LINE_NUMBERS");
+    assert!(test_resolve_main_line_numbers(Some(true)));
+    assert!(!test_resolve_main_line_numbers(Some(false)));
+}
+
+#[test]
+fn resolve_main_line_numbers_env_var_override() {
+    std::env::set_var("LEAF_MAIN_LINE_NUMBERS", "1");
+    assert!(test_resolve_main_line_numbers(Some(false)));
+
+    std::env::set_var("LEAF_MAIN_LINE_NUMBERS", "0");
+    assert!(!test_resolve_main_line_numbers(Some(true)));
+
+    std::env::set_var("LEAF_MAIN_LINE_NUMBERS", "invalid");
+    assert!(test_resolve_main_line_numbers(Some(true)));
+    std::env::remove_var("LEAF_MAIN_LINE_NUMBERS");
+}

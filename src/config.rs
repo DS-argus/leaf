@@ -20,6 +20,8 @@ pub(crate) struct LeafConfig {
     pub(crate) watch: Option<bool>,
     pub(crate) width: Option<usize>,
     pub(crate) extras: Vec<String>,
+    #[serde(rename = "main-line-numbers")]
+    pub(crate) main_line_numbers: Option<bool>,
     #[serde(rename = "code-line-numbers")]
     pub(crate) code_line_numbers: Option<bool>,
     #[serde(

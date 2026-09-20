@@ -373,6 +373,10 @@ impl App {
         self.file_mode = file_mode;
     }
 
+    pub(crate) fn set_line_numbers_visible(&mut self, value: bool) {
+        self.line_number_visible = value;
+    }
+
     pub(crate) fn set_code_line_numbers(&mut self, value: bool) {
         self.code_line_numbers = value;
     }
