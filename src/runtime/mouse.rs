@@ -320,6 +320,9 @@ fn try_open_editor(
 
             crossterm::terminal::enable_raw_mode()?;
             crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+            if app.is_mouse_capture_enabled() {
+                crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+            }
             terminal.clear()?;
             app.reload(ss, themes);
 
