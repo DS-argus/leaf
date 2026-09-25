@@ -1,11 +1,73 @@
 use super::{test_assets, test_md_theme};
-use crate::markdown::{highlight_line, parse_markdown, resolve_syntax};
+use crate::markdown::{
+    display_width, highlight_line, parse_markdown, parse_markdown_with_width, resolve_syntax,
+    LinkSpan,
+};
 use crate::theme::app_theme;
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
 use syntect::parsing::SyntaxSet;
+
+fn adversarial_table_fixture() -> (
+    Vec<Line<'static>>,
+    Vec<LinkSpan>,
+    Vec<crate::markdown::LinkOccurrence>,
+) {
+    let (ss, theme) = super::test_assets();
+    // A wraps in the first cell before C; parser registration is A/C/B while visual rows are A/B/C.
+    let source = "| Left | Right |\n| :---: | ---: |\n| [A A A A A A A A A A A A A A A A](https://example.test/a) [C](https://example.test/c) | [B](https://example.test/b) |\n";
+    let parsed = parse_markdown_with_width(
+        source,
+        &ss,
+        &theme,
+        36,
+        &super::test_md_theme(),
+        false,
+        true,
+    );
+    (parsed.lines, parsed.link_spans, parsed.link_occurrences)
+}
+
+fn span_destinations<'a>(
+    spans: &[LinkSpan],
+    occurrences: &'a [crate::markdown::LinkOccurrence],
+) -> Vec<&'a str> {
+    spans
+        .iter()
+        .map(|span| occurrences[span.occurrence_id.0].destination.as_str())
+        .collect()
+}
+
+fn table_link_marker_positions(lines: &[Line<'_>]) -> Vec<(usize, usize, char)> {
+    let link_icon = app_theme().markdown.link_icon;
+    lines
+        .iter()
+        .enumerate()
+        .flat_map(|(line_idx, line)| {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            let mut col = 0usize;
+            let mut markers = Vec::new();
+            for span in &line.spans {
+                let content = span.content.as_ref();
+                if content == "#" && span.style.fg == Some(link_icon) {
+                    let label = text
+                        .chars()
+                        .nth(col + 1)
+                        .expect("fixture marker should be followed by a label");
+                    markers.push((line_idx, col, label));
+                }
+                col += display_width(content);
+            }
+            markers
+        })
+        .collect()
+}
 
 #[test]
 fn blockquote_bold_link_preserves_link_color() {
@@ -46,56 +108,27 @@ fn link_spans_detected_for_all_link_types() {
 
 [A](https://example.com/a) and [B](https://example.com/b)
 ";
-    let (_, _, link_spans, _) =
-        parse_markdown(md, &ss, &theme, &test_md_theme(), false, true).into();
+    let parsed = parse_markdown(md, &ss, &theme, &test_md_theme(), false, true);
+    let urls = span_destinations(&parsed.link_spans, &parsed.link_occurrences);
 
-    let urls: Vec<&str> = link_spans.iter().map(|ls| ls.url.as_str()).collect();
-
-    assert!(
-        urls.contains(&"https://example.com/simple"),
-        "simple link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/bold"),
-        "bold link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/italic"),
-        "italic link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/strike"),
-        "strikethrough link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"#section"),
-        "internal link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/heading"),
-        "heading link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/quote"),
-        "blockquote link missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/a"),
-        "multi-link A missing: {urls:?}"
-    );
-    assert!(
-        urls.contains(&"https://example.com/b"),
-        "multi-link B missing: {urls:?}"
-    );
-
-    for ls in &link_spans {
+    for expected in [
+        "https://example.com/simple",
+        "https://example.com/bold",
+        "https://example.com/italic",
+        "https://example.com/strike",
+        "#section",
+        "https://example.com/heading",
+        "https://example.com/quote",
+        "https://example.com/a",
+        "https://example.com/b",
+    ] {
         assert!(
-            ls.end_col > ls.start_col,
-            "link {:?} has zero width (start={} end={})",
-            ls.url,
-            ls.start_col,
-            ls.end_col,
+            urls.contains(&expected),
+            "link missing: {expected}, got {urls:?}"
         );
+    }
+    for span in &parsed.link_spans {
+        assert!(span.end_col > span.start_col);
     }
 }
 
@@ -107,14 +140,58 @@ fn link_spans_in_table_are_detected() {
 |------|------|
 | Test | [example](https://example.com/table) |
 ";
-    let (_, _, link_spans, _) =
-        parse_markdown(md, &ss, &theme, &test_md_theme(), false, true).into();
-
-    let urls: Vec<&str> = link_spans.iter().map(|ls| ls.url.as_str()).collect();
+    let parsed = parse_markdown(md, &ss, &theme, &test_md_theme(), false, true);
+    let urls = span_destinations(&parsed.link_spans, &parsed.link_occurrences);
     assert!(
         urls.contains(&"https://example.com/table"),
         "table link missing: {urls:?}"
     );
+}
+
+#[test]
+fn wrapped_repeated_destinations_keep_distinct_ids_and_continuations() {
+    let (ss, theme) = test_assets();
+    let md = "[one two three four five six seven](https://example.test/repeat) and [again](https://example.test/repeat)";
+    let parsed = parse_markdown_with_width(md, &ss, &theme, 18, &test_md_theme(), false, true);
+    assert_eq!(parsed.link_occurrences.len(), 2);
+    assert_ne!(parsed.link_occurrences[0].id, parsed.link_occurrences[1].id);
+    assert_eq!(
+        parsed.link_occurrences[0].destination,
+        parsed.link_occurrences[1].destination
+    );
+    let first_ranges: Vec<_> = parsed
+        .link_spans
+        .iter()
+        .filter(|span| span.occurrence_id == parsed.link_occurrences[0].id)
+        .collect();
+    assert!(
+        first_ranges.len() > 1,
+        "wrapped label should have multiple ranges"
+    );
+    assert!(first_ranges
+        .iter()
+        .all(|span| span.end_col > span.start_col));
+}
+
+#[test]
+fn mixed_style_mapping_does_not_depend_on_link_color() {
+    let (ss, theme) = test_assets();
+    let mut md_theme = test_md_theme();
+    md_theme.link_text = md_theme.text;
+    let parsed = parse_markdown(
+        "[**bold** and `code` and ==mark==](https://example.test/mixed)",
+        &ss,
+        &theme,
+        &md_theme,
+        false,
+        true,
+    );
+    assert_eq!(parsed.link_occurrences.len(), 1);
+    assert!(!parsed.link_spans.is_empty());
+    assert!(parsed
+        .link_spans
+        .iter()
+        .all(|span| span.occurrence_id == parsed.link_occurrences[0].id));
 }
 
 #[test]
@@ -282,5 +359,52 @@ fn php_code_block_without_open_tag_is_highlighted() {
     assert_ne!(
         keyword_fg, variable_fg,
         "php block without <?php should highlight keywords and variables differently"
+    );
+}
+
+#[test]
+fn adversarial_table_fixture_preserves_visual_destination_order() {
+    const A: &str = "https://example.test/a";
+    const B: &str = "https://example.test/b";
+    const C: &str = "https://example.test/c";
+
+    let (lines, link_spans, occurrences) = adversarial_table_fixture();
+    let markers = table_link_marker_positions(&lines);
+    let labels: Vec<char> = markers.iter().map(|(_, _, label)| *label).collect();
+    assert_eq!(labels, vec!['A', 'B', 'C']);
+    assert!(
+        markers[2].0 > markers[0].0,
+        "C follows A on a continuation row"
+    );
+
+    for ((line, column, _), destination) in markers.iter().zip([A, B, C]) {
+        let range = link_spans
+            .iter()
+            .find(|span| {
+                span.line_idx == *line && span.start_col <= *column && *column < span.end_col
+            })
+            .expect("every visible marker must have exact ownership");
+        assert_eq!(occurrences[range.occurrence_id.0].destination, destination);
+    }
+    let mut seen = std::collections::HashSet::new();
+    let visual_destinations: Vec<_> = link_spans
+        .iter()
+        .filter(|span| seen.insert(span.occurrence_id))
+        .map(|span| occurrences[span.occurrence_id.0].destination.as_str())
+        .collect();
+    assert_eq!(visual_destinations, vec![A, B, C]);
+    assert!(
+        link_spans
+            .iter()
+            .filter(|span| occurrences[span.occurrence_id.0].destination == A)
+            .count()
+            > 1
+    );
+    assert_eq!(
+        occurrences
+            .iter()
+            .map(|occurrence| occurrence.destination.as_str())
+            .collect::<Vec<_>>(),
+        vec![A, C, B]
     );
 }

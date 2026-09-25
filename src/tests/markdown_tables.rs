@@ -245,3 +245,39 @@ fn table_cell_with_vs16_emoji_fits_render_width() {
         );
     }
 }
+
+#[test]
+fn linked_table_inline_variants_retain_one_occurrence_owner() {
+    let (ss, theme) = test_assets();
+    let md = "| Content |\n|---|\n| [**bold** `code` $\\alpha$ ==mark==](https://example.test/table-mixed) |\n";
+    let parsed = parse_markdown(md, &ss, &theme, &test_md_theme(), false, true);
+
+    assert_eq!(parsed.link_occurrences.len(), 1);
+    assert!(!parsed.link_spans.is_empty());
+    assert!(parsed
+        .link_spans
+        .iter()
+        .all(|span| span.occurrence_id == parsed.link_occurrences[0].id));
+    assert!(parsed
+        .link_spans
+        .iter()
+        .all(|span| span.end_col > span.start_col));
+}
+
+#[test]
+fn repeated_table_destinations_get_distinct_ids() {
+    let (ss, theme) = test_assets();
+    let md = "| A | B |\n|---|---|\n| [one](https://example.test/same) | [two](https://example.test/same) |\n";
+    let parsed = parse_markdown(md, &ss, &theme, &test_md_theme(), false, true);
+
+    assert_eq!(parsed.link_occurrences.len(), 2);
+    assert_ne!(parsed.link_occurrences[0].id, parsed.link_occurrences[1].id);
+    assert!(parsed
+        .link_spans
+        .iter()
+        .any(|span| span.occurrence_id == parsed.link_occurrences[0].id));
+    assert!(parsed
+        .link_spans
+        .iter()
+        .any(|span| span.occurrence_id == parsed.link_occurrences[1].id));
+}

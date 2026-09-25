@@ -16,6 +16,7 @@ pub(crate) struct EditorPickerState {
 
 impl App {
     pub(crate) fn open_help(&mut self) {
+        self.exit_link_mode();
         self.help_open = true;
     }
 
@@ -28,6 +29,7 @@ impl App {
     }
 
     pub(crate) fn open_path_popup(&mut self) {
+        self.exit_link_mode();
         self.path_popup_open = true;
     }
 
@@ -111,6 +113,7 @@ impl App {
     }
 
     pub(crate) fn open_editor_picker(&mut self) {
+        self.exit_link_mode();
         let editors = crate::editor::scan_available_editors();
         let current = self
             .editor_config

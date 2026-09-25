@@ -33,6 +33,7 @@ impl App {
     }
 
     pub(crate) fn begin_goto_line(&mut self) {
+        self.exit_link_mode();
         self.reset_numkey_state();
         self.clear_active_search();
         self.goto_line.mode = true;
@@ -73,6 +74,7 @@ impl App {
             self.goto_line.error = false;
             self.reset_toc_scroll_mode();
             let scroll_pos = render_index.saturating_sub(GOTO_LINE_CONTEXT_OFFSET);
+            self.visual_scroll_offset = 0;
             self.scroll = scroll_pos.min(self.max_scroll());
         } else {
             self.goto_line.error = true;

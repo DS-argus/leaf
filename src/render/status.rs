@@ -111,6 +111,15 @@ pub(crate) fn status_watch_section(app: &App) -> Option<Vec<Span<'static>>> {
     Some(vec![span])
 }
 
+fn status_match_count_section(index: usize, count: usize) -> Vec<Span<'static>> {
+    let theme = app_theme();
+    vec![Span::styled(
+        format!(" {index}/{count} "),
+        Style::default()
+            .fg(theme.ui.status_success_fg)
+            .bg(theme.ui.status_success_bg),
+    )]
+}
 pub(crate) fn status_search_section(app: &App) -> Option<Vec<Span<'static>>> {
     let theme = app_theme();
     if app.is_search_mode() {
@@ -134,12 +143,10 @@ pub(crate) fn status_search_section(app: &App) -> Option<Vec<Span<'static>>> {
                 .bg(theme.ui.status_error_bg),
         )
     } else {
-        Span::styled(
-            format!(" {}/{} ", app.search_index() + 1, app.search_match_count()),
-            Style::default()
-                .fg(theme.ui.status_success_fg)
-                .bg(theme.ui.status_success_bg),
-        )
+        return Some(status_match_count_section(
+            app.search_index() + 1,
+            app.search_match_count(),
+        ));
     };
     Some(vec![span])
 }
@@ -180,6 +187,15 @@ pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> 
 }
 
 pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
+    if app.is_link_mode() {
+        return &[
+            "n/N next/prev",
+            "Enter copy",
+            "o open",
+            "f/esc cancel",
+            "q quit",
+        ];
+    }
     if app.is_goto_line_mode() || app.is_search_mode() {
         &["enter confirm", "esc cancel"]
     } else if app.has_active_goto_line() {
@@ -266,6 +282,17 @@ fn link_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
     let (text, fg) = match flash {
         LinkFlash::Copied => (" Copied to clipboard ", theme.ui.status_success_fg),
         LinkFlash::CopyFailed => (clipboard_hint(), theme.ui.status_error_fg),
+        LinkFlash::NoLinks => (" No links in document ", theme.ui.status_warning_fg),
+        LinkFlash::NoneBelow => (
+            " No links at or below this view ",
+            theme.ui.status_warning_fg,
+        ),
+        LinkFlash::NoDisplaySpace => (" No space to display links ", theme.ui.status_warning_fg),
+        LinkFlash::OpenRequested => (" Open requested ", theme.ui.status_success_fg),
+        LinkFlash::OpenFailed => (" Open request failed ", theme.ui.status_error_fg),
+        LinkFlash::UnsupportedTarget => {
+            (" Only HTTP(S) links can open ", theme.ui.status_warning_fg)
+        }
     };
     Some(vec![Span::styled(text, Style::default().fg(fg).bg(bar_bg))])
 }
@@ -330,6 +357,12 @@ pub(crate) fn build_status_bar(app: &App, pct: u16) -> Vec<Span<'static>> {
     let bar_bg = status_bar_bg();
     let outer_separator = Span::raw(" ");
 
+    if let Some(flash_section) = link_flash_section(app) {
+        let mut left = status_brand_section();
+        left.extend(flash_section);
+        return join_span_sections(vec![left], outer_separator);
+    }
+
     if !app.is_mouse_capture_enabled() {
         let theme = app_theme();
         let mut left = status_brand_section();
@@ -353,12 +386,6 @@ pub(crate) fn build_status_bar(app: &App, pct: u16) -> Vec<Span<'static>> {
     }
 
     if let Some(flash_section) = config_flash_section(app) {
-        let mut left = status_brand_section();
-        left.extend(flash_section);
-        return join_span_sections(vec![left], outer_separator);
-    }
-
-    if let Some(flash_section) = link_flash_section(app) {
         let mut left = status_brand_section();
         left.extend(flash_section);
         return join_span_sections(vec![left], outer_separator);
@@ -416,4 +443,51 @@ pub(crate) fn build_status_bar(app: &App, pct: u16) -> Vec<Span<'static>> {
     }
 
     join_span_sections(sections, outer_separator)
+}
+
+pub(crate) fn build_link_status(app: &App) -> ratatui::text::Line<'static> {
+    let Some(destination) = app.selected_link_destination() else {
+        return ratatui::text::Line::default();
+    };
+    let theme = app_theme();
+    let bar_bg = status_bar_bg();
+    let mut left = status_brand_section();
+    left.extend(status_filename_section(app.filename()));
+    left.extend(status_match_count_section(
+        app.selected_link_index().unwrap_or(0) + 1,
+        app.link_order.len(),
+    ));
+    if let Some(watch) = status_watch_section(app) {
+        left.extend(watch);
+    }
+    if let Some(feedback) = editor_flash_section(app)
+        .or_else(|| watch_flash_section(app))
+        .or_else(|| config_flash_section(app))
+        .or_else(|| link_flash_section(app))
+        .or_else(|| code_block_flash_section(app))
+        .or_else(|| path_flash_section(app))
+        .or_else(|| history_flash_section(app))
+    {
+        left.extend(feedback);
+    }
+    let mut url = String::with_capacity(destination.len() + 2);
+    url.push(' ');
+    for c in destination.chars() {
+        if c.is_control() {
+            url.extend(c.escape_default());
+        } else {
+            url.push(c);
+        }
+    }
+    url.push(' ');
+    let url_section = vec![Span::styled(
+        url,
+        Style::default()
+            .fg(theme.ui.status_search_fg)
+            .bg(theme.ui.status_search_bg),
+    )];
+    ratatui::text::Line::from(join_span_sections(
+        vec![left, url_section, status_shortcuts_section(app, bar_bg)],
+        Span::raw(" "),
+    ))
 }

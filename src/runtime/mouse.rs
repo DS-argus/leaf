@@ -2,7 +2,6 @@ use crate::{
     app::{App, EditorFlash, LinkFlash, PathKind},
     clipboard::{copy_to_clipboard, open_url},
     editor::{self, classify, open_in_editor, split_editor_cmd, EditorResult},
-    markdown::display_width,
     render::{CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
 };
 use anyhow::Result;
@@ -15,6 +14,7 @@ use super::DOUBLE_CLICK_THRESHOLD;
 
 pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
     let prev_pos = app.mouse_position;
+    let was_link_mode = app.is_link_mode();
     app.mouse_position = (mouse.column, mouse.row);
     let state_changed = if app.is_path_popup_open() {
         match mouse.kind {
@@ -69,6 +69,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
     } else {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
+                app.exit_link_mode();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_up(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -80,6 +81,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 true
             }
             MouseEventKind::ScrollDown => {
+                app.exit_link_mode();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_down(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -91,6 +93,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 true
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                app.exit_link_mode();
                 let now = Instant::now();
                 let is_double_click = app
                     .last_click
@@ -133,8 +136,10 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         ),
                     );
                 }
-                if let Some(link) = link_hit {
-                    let is_internal = link.url.starts_with('#');
+                if let Some(destination) =
+                    link_hit.and_then(|link| app.link_destination(link.occurrence_id))
+                {
+                    let is_internal = destination.starts_with('#');
                     if mouse.modifiers.contains(KeyModifiers::CONTROL) {
                         if is_internal {
                             if let Some(path) = app.filepath() {
@@ -144,7 +149,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                                 });
                             }
                         } else {
-                            let url = link.url.clone();
+                            let url = destination.to_owned();
                             std::thread::spawn(move || {
                                 open_url(&url);
                             });
@@ -154,7 +159,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         let text = if is_internal {
                             app.filename().to_string()
                         } else {
-                            link.url.clone()
+                            destination.to_owned()
                         };
                         if copy_to_clipboard(&text) {
                             app.set_link_flash(LinkFlash::Copied);
@@ -245,7 +250,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
             _ => false,
         }
     };
-    state_changed
+    state_changed || was_link_mode != app.is_link_mode()
 }
 
 pub(super) fn handle_open_in_editor(
@@ -402,31 +407,9 @@ fn line_idx_at(app: &App, col: u16, row: u16) -> Option<usize> {
     if col < inner_x || col >= inner_x + inner_w || row < area.y || row >= area.y + area.height {
         return None;
     }
-    let rel_row = (row - area.y) as usize;
-    let content_width = inner_w.max(1) as usize;
-    let mut visual_row = 0usize;
-    let total = app.lines.len();
-    for line_idx in app.scroll..total {
-        let line = &app.lines[line_idx];
-        let line_width: usize = line
-            .spans
-            .iter()
-            .map(|s| display_width(s.content.as_ref()))
-            .sum();
-        let wrapped_lines = if line_width == 0 {
-            1
-        } else {
-            line_width.div_ceil(content_width)
-        };
-        if rel_row < visual_row + wrapped_lines {
-            return Some(line_idx);
-        }
-        visual_row += wrapped_lines;
-        if visual_row > area.height as usize {
-            break;
-        }
-    }
-    None
+    app.link_viewport_projection()
+        .row((row - area.y) as usize)
+        .map(|row| row.logical_line)
 }
 
 fn strip_unc_prefix(path: std::path::PathBuf) -> std::path::PathBuf {

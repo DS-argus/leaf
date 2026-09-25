@@ -40,30 +40,35 @@ impl App {
     pub(crate) fn scroll_down(&mut self, n: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.visual_scroll_offset = 0;
         self.scroll = (self.scroll + n).min(self.max_scroll());
     }
 
     pub(crate) fn scroll_up(&mut self, n: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.visual_scroll_offset = 0;
         self.scroll = self.scroll.saturating_sub(n);
     }
 
     pub(crate) fn scroll_top(&mut self) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.visual_scroll_offset = 0;
         self.scroll = 0;
     }
 
     pub(crate) fn scroll_bottom(&mut self) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.visual_scroll_offset = 0;
         self.scroll = self.max_scroll();
     }
 
     pub(crate) fn scroll_to(&mut self, position: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.visual_scroll_offset = 0;
         self.scroll = position.min(self.max_scroll());
     }
 
@@ -110,6 +115,7 @@ impl App {
         };
         let preserved_offset = self.current_toc_offset();
         self.reset_numkey_state();
+        self.visual_scroll_offset = 0;
         self.scroll = entry_line.min(self.max_scroll());
         self.toc_scroll_mode = TocScrollMode::Manual(preserved_offset);
         self.toc_active_pin = Some(entry_idx);
@@ -141,6 +147,7 @@ impl App {
         };
 
         self.numkey_cycle = Some(NumkeyCycleState { key, position });
+        self.visual_scroll_offset = 0;
         self.scroll = self.toc[group[position]].line.min(self.max_scroll());
     }
 

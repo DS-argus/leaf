@@ -77,7 +77,7 @@ pub(super) fn popup_footer_line(segments: &[&'static str], bg: Color) -> Line<'s
 
 pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
     let theme = app_theme();
-    let area = centered_rect(53, 26, f.area());
+    let area = centered_rect(53, 29, f.area());
 
     let select_hint =
         crate::editor::selection_modifier_label(&crate::editor::detect_terminal_emulator());
@@ -204,6 +204,18 @@ pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
             Span::raw("       "),
             Span::styled("?           ", key_style),
             Span::styled("help", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("f          ", key_style),
+            Span::styled("focus links; n/N next/prev", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Enter / o  ", key_style),
+            Span::styled("copy / open HTTP(S) link", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("f / Esc    ", key_style),
+            Span::styled("exit link mode", text_style),
         ]),
         Line::from(""),
         popup_footer_line(&["esc close", "? close"], theme.ui.toc_bg),

@@ -1,19 +1,48 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-pub(crate) fn open_url(url: &str) -> bool {
-    let cmd: &[&str] = match std::env::consts::OS {
-        "macos" => &["open", url],
-        "windows" => &["cmd", "/c", "start", "", url],
-        _ => &["xdg-open", url],
+pub(crate) fn is_external_http_url(url: &str) -> bool {
+    if url.is_empty()
+        || url.trim() != url
+        || url.chars().any(char::is_control)
+        || url.contains('\\')
+    {
+        return false;
+    }
+
+    let Some((scheme, after_scheme)) = url.split_once("://") else {
+        return false;
     };
-    Command::new(cmd[0])
-        .args(&cmd[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .is_ok()
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+
+    let authority_end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..authority_end];
+    if authority.is_empty() {
+        return false;
+    }
+
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+
+    parsed.host().is_some()
+}
+
+pub(crate) fn open_url(url: &str) -> bool {
+    for mut command in open::commands(url) {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if command.spawn().is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) fn copy_to_clipboard(text: &str) -> bool {
@@ -83,4 +112,63 @@ fn base64_encode(input: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_external_http_url;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn external_http_url_policy_requires_absolute_http_host() {
+        for url in [
+            "http://example.test/path",
+            "HTTPS://example.test/path",
+            "hTtPs://user:pass@example.test:8443/path?x=1#frag",
+        ] {
+            assert!(is_external_http_url(url), "expected accepted URL: {url}");
+        }
+
+        for url in [
+            "example.test/path",
+            "//example.test/path",
+            "#anchor",
+            "mailto:user@example.test",
+            "javascript:alert(1)",
+            "file:///tmp/example",
+            "https:///path-without-host",
+            "http:/example.test",
+            "https//example.test",
+            " https://example.test/path",
+            "https://example.test/path ",
+            "https://\\example.test/path",
+            "https://example.test/path\\next",
+            "https://example.test/path\nnext",
+            "https://example.test/path\u{0000}",
+            "not a URL",
+        ] {
+            assert!(!is_external_http_url(url), "expected rejected URL: {url:?}");
+        }
+    }
+
+    #[test]
+    fn opener_commands_keep_hostile_url_out_of_shell_code() {
+        let hostile = r##"https://example.test/?q=";&|$()`%"##;
+        let target = OsStr::new(hostile);
+        let commands = open::commands(hostile);
+        assert!(!commands.is_empty());
+
+        for command in commands {
+            assert_ne!(command.get_program(), OsStr::new("cmd"));
+            let target_arg = command.get_args().any(|arg| arg == target);
+            let target_env = command
+                .get_envs()
+                .any(|(name, value)| name == OsStr::new("OPEN_RS_TARGET") && value == Some(target));
+            assert!(
+                target_arg || target_env,
+                "launcher lost or embedded hostile URL: {:?}",
+                command.get_program()
+            );
+        }
+    }
 }

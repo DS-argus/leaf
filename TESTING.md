@@ -62,6 +62,24 @@ Use these keys while viewing the fixture:
 - `/` to search for `tokyo-signal`
 - `n` and `N` to move through search matches
 
+### Keyboard Link Navigation
+
+- Scroll into the fixture, press `f`, and confirm the first visible link is focused.
+- Use `n` / `N` through both document ends; confirm cyclic order and distinct repeated destinations.
+- Start with only a wrapped label continuation visible; confirm it is selectable as one link.
+- Start above a link-free region; confirm entry selects the next link below. With only links above, confirm no jump.
+- Press `Enter`; check the clipboard contains the whole destination, feedback is shown, and focus remains.
+- Press `o` on a controlled HTTP(S) link; check the browser separately. Internal, relative, and mailto targets must not launch.
+- Confirm filename, result counter, watch indicator, URL, and shortcuts use normal search status colors/order. Long status text clips on the right without wrapping; h/l and arrows do not pan it, and Enter still copies the full URL.
+- Toggle mouse capture off before entering; the URL must remain visible.
+- Resize with focus active, including a narrow viewport; confirm the same occurrence remains focused.
+- Press `f` to exit, then re-enter and exit with `Esc`; both preserve the reading position. Confirm `Ctrl+f` still opens normal search outside link mode.
+- With a link focused, use `j/k/d/u`, arrows, page/home/end and confirm scrolling persists across redraws without snapping back; `n/N` explicitly reveal the next/previous link. Confirm `l` toggles line numbers.
+- Press `Ctrl+e` while in link mode and verify the configured editor receives the current file. Check editor errors remain visible. `/` or `Ctrl+f` and `:` should switch to search/goto input without first exiting manually.
+- In link mode, `q` / `Q` quit Leaf. Other common shortcuts follow normal Leaf behavior, including `Ctrl+q` for the fuzzy picker.
+- Reload or replace the file; confirm stale focus is cleared. Search/popup text entry must not treat `f` as link-mode entry.
+- Record actual clipboard/browser checks separately from automated command stubs and PTY rendering evidence.
+
 ### File Path Copy
 
 While viewing a file in `leaf`, press `p` to open the File Path popup:
@@ -390,3 +408,19 @@ Line 27: scrolling sample
 Line 28: scrolling sample
 Line 29: scrolling sample
 Line 30: scrolling sample
+
+## Keyboard Link Navigation Fixture
+
+[First](https://example.com/first) [Repeated](https://example.com/first)
+
+[Long destination](https://example.com/docs/한글/abcdefghijklmnopqrstuvwxyz?alpha=1234567890&beta=abcdefghij#section)
+
+[Internal](#manual-fixture) [Relative](README.md) [Email](mailto:reader@example.com)
+
+[Reference destination][link-navigation-reference]
+
+[link-navigation-reference]: https://example.com/reference
+
+| Wrapped left column | Right column |
+|---|---|
+| [A very long link label which wraps across multiple rows](https://example.com/a) [C](https://example.com/c) | [B](https://example.com/b) |

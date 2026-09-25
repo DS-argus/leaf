@@ -64,6 +64,43 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    if let Some(selected) = app.selected_link {
+        for (offset, line) in visible_lines.iter_mut().enumerate() {
+            if let Some(ranges) = app.link_spans_by_line.get(&(scroll + offset)) {
+                let mut highlighted = Vec::new();
+                let mut col = 0;
+                for span in &line.spans {
+                    let mut text = String::new();
+                    let mut current_style = span.style;
+                    for (cluster, width) in crate::markdown::iter_cluster_widths(&span.content) {
+                        let focused = ranges.iter().any(|range| {
+                            range.occurrence_id == selected
+                                && col < range.end_col
+                                && col + width > range.start_col
+                        });
+                        let style = if focused {
+                            span.style
+                                .bg(theme.markdown.search_match_bg)
+                                .add_modifier(ratatui::style::Modifier::BOLD)
+                        } else {
+                            span.style
+                        };
+                        if style != current_style && !text.is_empty() {
+                            highlighted
+                                .push(Span::styled(std::mem::take(&mut text), current_style));
+                        }
+                        current_style = style;
+                        text.push_str(cluster);
+                        col += width;
+                    }
+                    if !text.is_empty() {
+                        highlighted.push(Span::styled(text, current_style));
+                    }
+                }
+                line.spans = highlighted;
+            }
+        }
+    }
     if app.is_line_number_visible() {
         let digit_width = app.line_number_total().max(1).to_string().len();
         let gutter_style = Style::default().fg(theme.markdown.code_gutter);
@@ -98,7 +135,8 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(
         Paragraph::new(visible_lines)
             .style(Style::default().bg(theme.ui.content_bg))
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((app.visual_scroll_offset.min(u16::MAX as usize) as u16, 0)),
         content_area,
     );
 
@@ -196,6 +234,14 @@ fn apply_hover_style(
 }
 
 pub(super) fn render_status_bar(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.is_link_mode() {
+        f.render_widget(
+            Paragraph::new(super::status::build_link_status(app))
+                .style(Style::default().bg(super::status::status_bar_bg())),
+            area,
+        );
+        return;
+    }
     let pct = app.scroll_percent();
     let bar_bg = super::status::status_bar_bg();
     app.refresh_status_cache(pct);

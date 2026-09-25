@@ -1,12 +1,37 @@
+use super::links::{emit_linked_line, LinkSpan, LinkedSpan};
 use super::width::{display_width, iter_cluster_widths};
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
 
+fn unowned_spans(spans: Vec<Span<'static>>) -> Vec<LinkedSpan> {
+    spans
+        .into_iter()
+        .map(|span| LinkedSpan::new(span, None))
+        .collect()
+}
+
+fn push_wrapped_line(
+    lines: &mut Vec<Line<'static>>,
+    ranges: &mut Vec<LinkSpan>,
+    current_prefix: &mut Vec<LinkedSpan>,
+    next_prefix: &[LinkedSpan],
+    body_started: &mut bool,
+    current_width: &mut usize,
+) {
+    if *body_started {
+        emit_linked_line(lines, ranges, std::mem::take(current_prefix));
+        *current_prefix = next_prefix.to_vec();
+        *body_started = false;
+        *current_width = 0;
+    }
+}
+
 pub(super) fn push_wrapped_prefixed_lines(
     lines: &mut Vec<Line<'static>>,
-    body_spans: &mut Vec<Span<'static>>,
+    ranges: &mut Vec<LinkSpan>,
+    body_spans: &mut Vec<LinkedSpan>,
     first_prefix: Vec<Span<'static>>,
     continuation_prefix: Vec<Span<'static>>,
     render_width: usize,
@@ -29,124 +54,115 @@ pub(super) fn push_wrapped_prefixed_lines(
 
     let total_width: usize = body_spans
         .iter()
-        .map(|s| display_width(s.content.as_ref()))
+        .map(|linked| display_width(linked.span.content.as_ref()))
         .sum();
     if total_width <= max_width {
-        let mut all = first_prefix;
+        let mut all = unowned_spans(first_prefix);
         all.append(body_spans);
-        lines.push(Line::from(all));
+        emit_linked_line(lines, ranges, all);
         return;
     }
 
-    let mut current_prefix = first_prefix.clone();
-    let mut next_prefix = continuation_prefix.clone();
+    let mut current_prefix = unowned_spans(first_prefix);
+    let next_prefix = unowned_spans(continuation_prefix);
     let mut current_width = 0usize;
     let mut body_started = false;
 
-    let push_current = |lines: &mut Vec<Line<'static>>,
-                        current_prefix: &mut Vec<Span<'static>>,
-                        next_prefix: &mut Vec<Span<'static>>,
-                        body_started: &mut bool,
-                        current_width: &mut usize| {
-        if *body_started {
-            lines.push(Line::from(std::mem::take(current_prefix)));
-            *current_prefix = next_prefix.clone();
-            *body_started = false;
-            *current_width = 0;
-        }
-    };
-
-    for span in body_spans.drain(..) {
-        let style = span.style;
+    for linked in body_spans.drain(..) {
+        let style = linked.span.style;
+        let link_id = linked.link_id;
         let mut token = String::new();
         let mut token_is_space = false;
 
-        let mut flush_token = |token: &mut String,
-                               token_is_space: bool,
-                               lines: &mut Vec<Line<'static>>,
-                               current_prefix: &mut Vec<Span<'static>>,
-                               body_started: &mut bool,
-                               current_width: &mut usize| {
-            if token.is_empty() {
-                return;
-            }
-
-            let token_width = display_width(token);
-            if token_is_space {
-                let keep_styled_padding = style.bg.is_some();
-                if (*body_started || keep_styled_padding)
-                    && *current_width + token_width <= max_width
-                {
-                    current_prefix.push(Span::styled(std::mem::take(token), style));
-                    *current_width += token_width;
-                    *body_started = true;
-                } else {
-                    token.clear();
+        let mut flush_wrapped_token =
+            |token: &mut String,
+             token_is_space: bool,
+             current_prefix: &mut Vec<LinkedSpan>,
+             body_started: &mut bool,
+             current_width: &mut usize| {
+                if token.is_empty() {
+                    return;
                 }
-                return;
-            }
-
-            if *body_started && *current_width + token_width > max_width {
-                push_current(
-                    lines,
-                    current_prefix,
-                    &mut next_prefix,
-                    body_started,
-                    current_width,
-                );
-            }
-
-            if token_width <= max_width {
-                current_prefix.push(Span::styled(std::mem::take(token), style));
-                *current_width += token_width;
-                *body_started = true;
-                return;
-            }
-
-            let mut chunk = String::new();
-            let mut chunk_width = 0usize;
-            for (cluster, cluster_w) in iter_cluster_widths(token) {
-                let would_overflow = if *body_started {
-                    *current_width + chunk_width + cluster_w > max_width
-                } else {
-                    chunk_width + cluster_w > max_width
-                };
-                if would_overflow {
-                    if !chunk.is_empty() {
-                        current_prefix.push(Span::styled(std::mem::take(&mut chunk), style));
+                let token_width = display_width(token);
+                if token_is_space {
+                    let keep_styled_padding = style.bg.is_some();
+                    if (*body_started || keep_styled_padding)
+                        && *current_width + token_width <= max_width
+                    {
+                        current_prefix.push(LinkedSpan::new(
+                            Span::styled(std::mem::take(token), style),
+                            link_id,
+                        ));
+                        *current_width += token_width;
                         *body_started = true;
+                    } else {
+                        token.clear();
                     }
-                    push_current(
+                    return;
+                }
+                if *body_started && *current_width + token_width > max_width {
+                    push_wrapped_line(
                         lines,
+                        ranges,
                         current_prefix,
-                        &mut next_prefix,
+                        &next_prefix,
                         body_started,
                         current_width,
                     );
-                    chunk_width = 0;
                 }
-
-                chunk.push_str(cluster);
-                chunk_width += cluster_w;
-            }
-
-            if !chunk.is_empty() {
-                current_prefix.push(Span::styled(chunk, style));
-                *current_width += chunk_width;
-                *body_started = true;
-            }
-            token.clear();
-        };
-
-        for ch in span.content.chars() {
+                if token_width <= max_width {
+                    current_prefix.push(LinkedSpan::new(
+                        Span::styled(std::mem::take(token), style),
+                        link_id,
+                    ));
+                    *current_width += token_width;
+                    *body_started = true;
+                    return;
+                }
+                let mut chunk = String::new();
+                let mut chunk_width = 0usize;
+                for (cluster, cluster_w) in iter_cluster_widths(token) {
+                    let would_overflow = if *body_started {
+                        *current_width + chunk_width + cluster_w > max_width
+                    } else {
+                        chunk_width + cluster_w > max_width
+                    };
+                    if would_overflow {
+                        if !chunk.is_empty() {
+                            current_prefix.push(LinkedSpan::new(
+                                Span::styled(std::mem::take(&mut chunk), style),
+                                link_id,
+                            ));
+                            *body_started = true;
+                        }
+                        push_wrapped_line(
+                            lines,
+                            ranges,
+                            current_prefix,
+                            &next_prefix,
+                            body_started,
+                            current_width,
+                        );
+                        chunk_width = 0;
+                    }
+                    chunk.push_str(cluster);
+                    chunk_width += cluster_w;
+                }
+                if !chunk.is_empty() {
+                    current_prefix.push(LinkedSpan::new(Span::styled(chunk, style), link_id));
+                    *current_width += chunk_width;
+                    *body_started = true;
+                }
+                token.clear();
+            };
+        for ch in linked.span.content.chars() {
             let is_space = ch.is_whitespace();
             if token.is_empty() {
                 token_is_space = is_space;
             } else if token_is_space != is_space {
-                flush_token(
+                flush_wrapped_token(
                     &mut token,
                     token_is_space,
-                    lines,
                     &mut current_prefix,
                     &mut body_started,
                     &mut current_width,
@@ -156,10 +172,9 @@ pub(super) fn push_wrapped_prefixed_lines(
             token.push(ch);
         }
 
-        flush_token(
+        flush_wrapped_token(
             &mut token,
             token_is_space,
-            lines,
             &mut current_prefix,
             &mut body_started,
             &mut current_width,
@@ -167,7 +182,7 @@ pub(super) fn push_wrapped_prefixed_lines(
     }
 
     if body_started {
-        lines.push(Line::from(current_prefix));
+        emit_linked_line(lines, ranges, current_prefix);
     }
 }
 

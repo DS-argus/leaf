@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use super::latex;
+use super::links::{LinkRegistry, LinkedSpan};
 use super::LINK_MARKER;
 
 #[derive(Clone, Copy, Default)]
@@ -14,7 +15,7 @@ pub(super) struct InlineStyleState {
     pub(super) in_em: u8,
     pub(super) in_strike: u8,
     pub(super) in_underline: u8,
-    pub(super) in_link: bool,
+    pub(super) link_id: Option<super::links::LinkId>,
 }
 
 impl InlineStyleState {
@@ -40,6 +41,10 @@ impl InlineStyleState {
         self.in_em = 0;
         self.in_strike = 0;
         self.in_underline = 0;
+    }
+
+    pub(super) fn link_id(&self) -> Option<super::links::LinkId> {
+        self.link_id
     }
 }
 
@@ -113,7 +118,7 @@ pub(super) fn normalize_html_tag(raw: &str) -> Option<(HtmlTagName, bool)> {
 pub(super) fn handle_html_tag_event(
     raw: &str,
     inline: &mut InlineStyleState,
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut [LinkedSpan],
 ) -> HtmlTagOutcome {
     let Some((tag, is_open)) = normalize_html_tag(raw) else {
         return HtmlTagOutcome::NotRecognized;
@@ -121,7 +126,7 @@ pub(super) fn handle_html_tag_event(
     match (tag, is_open) {
         (HtmlTagName::Bold, true) => {
             inline.in_strong = inline.in_strong.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::BOLD);
             }
         }
@@ -130,7 +135,7 @@ pub(super) fn handle_html_tag_event(
         }
         (HtmlTagName::Italic, true) => {
             inline.in_em = inline.in_em.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::ITALIC);
             }
         }
@@ -139,7 +144,7 @@ pub(super) fn handle_html_tag_event(
         }
         (HtmlTagName::Strike, true) => {
             inline.in_strike = inline.in_strike.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::CROSSED_OUT);
             }
         }
@@ -148,7 +153,7 @@ pub(super) fn handle_html_tag_event(
         }
         (HtmlTagName::Underline, true) => {
             inline.in_underline = inline.in_underline.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::UNDERLINED);
             }
         }
@@ -173,7 +178,7 @@ pub(super) fn inline_text_style(
     blockquote_depth: usize,
     inline: InlineStyleState,
 ) -> Style {
-    let mut style = if inline.in_link {
+    let mut style = if inline.link_id.is_some() {
         let mut s = Style::default()
             .fg(theme.link_text)
             .add_modifier(Modifier::UNDERLINED);
@@ -189,7 +194,7 @@ pub(super) fn inline_text_style(
         Style::default().fg(theme.text)
     };
 
-    if inline.in_strong > 0 && !inline.in_link {
+    if inline.in_strong > 0 && inline.link_id.is_none() {
         style = style.fg(theme.strong_text);
     }
     style = style.add_modifier(inline.modifiers());
@@ -200,15 +205,15 @@ pub(super) fn inline_text_style(
 pub(super) fn handle_inline_style_event(
     ev: &MdEvent<'_>,
     inline: &mut InlineStyleState,
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut Vec<LinkedSpan>,
     theme: &MarkdownTheme,
     blockquote_depth: usize,
-    link_urls: &mut Vec<String>,
+    registry: &mut LinkRegistry,
 ) -> bool {
     match ev {
         MdEvent::Start(Tag::Strong) => {
             inline.in_strong = inline.in_strong.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::BOLD);
             }
             true
@@ -219,7 +224,7 @@ pub(super) fn handle_inline_style_event(
         }
         MdEvent::Start(Tag::Emphasis) => {
             inline.in_em = inline.in_em.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::ITALIC);
             }
             true
@@ -230,7 +235,7 @@ pub(super) fn handle_inline_style_event(
         }
         MdEvent::Start(Tag::Strikethrough) => {
             inline.in_strike = inline.in_strike.saturating_add(1);
-            if inline.in_link {
+            if inline.link_id.is_some() {
                 update_link_marker_modifier(spans, Modifier::CROSSED_OUT);
             }
             true
@@ -240,13 +245,13 @@ pub(super) fn handle_inline_style_event(
             true
         }
         MdEvent::Start(Tag::Link { dest_url, .. }) => {
-            inline.in_link = true;
-            link_urls.push(dest_url.to_string());
+            let link_id = registry.register(dest_url.as_ref());
+            inline.link_id = Some(link_id);
             push_link_marker(spans, theme, *inline, blockquote_depth);
             true
         }
         MdEvent::End(TagEnd::Link) => {
-            inline.in_link = false;
+            inline.link_id = None;
             true
         }
         _ => false,
@@ -254,41 +259,57 @@ pub(super) fn handle_inline_style_event(
 }
 
 pub(super) fn push_inline_code_span(
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut Vec<LinkedSpan>,
     text: &str,
     theme: &MarkdownTheme,
+    link_id: Option<super::links::LinkId>,
 ) {
-    spans.push(Span::styled(
-        format!(" {} ", text),
-        Style::default()
-            .fg(theme.inline_code_fg)
-            .bg(theme.inline_code_bg),
+    spans.push(LinkedSpan::new(
+        Span::styled(
+            format!(" {text} "),
+            Style::default()
+                .fg(theme.inline_code_fg)
+                .bg(theme.inline_code_bg),
+        ),
+        link_id,
     ));
 }
 
-pub(super) fn push_mark_span(spans: &mut Vec<Span<'static>>, text: &str, theme: &MarkdownTheme) {
-    spans.push(Span::styled(
-        format!(" {} ", text),
-        Style::default().fg(theme.mark_fg).bg(theme.mark_bg),
+pub(super) fn push_mark_span(
+    spans: &mut Vec<LinkedSpan>,
+    text: &str,
+    theme: &MarkdownTheme,
+    link_id: Option<super::links::LinkId>,
+) {
+    spans.push(LinkedSpan::new(
+        Span::styled(
+            format!(" {text} "),
+            Style::default().fg(theme.mark_fg).bg(theme.mark_bg),
+        ),
+        link_id,
     ));
 }
 
 pub(super) fn push_inline_latex_span(
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut Vec<LinkedSpan>,
     text: &str,
     theme: &MarkdownTheme,
+    link_id: Option<super::links::LinkId>,
 ) {
     let rendered = latex::to_unicode(text);
-    spans.push(Span::styled(
-        format!(" {rendered} "),
-        Style::default()
-            .fg(theme.latex_inline_fg)
-            .bg(theme.latex_inline_bg),
+    spans.push(LinkedSpan::new(
+        Span::styled(
+            format!(" {rendered} "),
+            Style::default()
+                .fg(theme.latex_inline_fg)
+                .bg(theme.latex_inline_bg),
+        ),
+        link_id,
     ));
 }
 
 pub(super) fn push_link_marker(
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut Vec<LinkedSpan>,
     theme: &MarkdownTheme,
     inline: InlineStyleState,
     blockquote_depth: usize,
@@ -299,15 +320,18 @@ pub(super) fn push_link_marker(
     if blockquote_depth > 0 {
         style = style.add_modifier(Modifier::ITALIC);
     }
-    spans.push(Span::styled(LINK_MARKER, style));
+    spans.push(LinkedSpan::new(
+        Span::styled(LINK_MARKER, style),
+        inline.link_id,
+    ));
 }
 
-pub(super) fn update_link_marker_modifier(spans: &mut [Span<'static>], modifier: Modifier) {
-    if let Some(span) = spans
+pub(super) fn update_link_marker_modifier(spans: &mut [LinkedSpan], modifier: Modifier) {
+    if let Some(linked) = spans
         .iter_mut()
         .rev()
-        .find(|s| s.content.as_ref() == LINK_MARKER)
+        .find(|linked| linked.span.content.as_ref() == LINK_MARKER)
     {
-        span.style = span.style.add_modifier(modifier);
+        linked.span.style = linked.span.style.add_modifier(modifier);
     }
 }

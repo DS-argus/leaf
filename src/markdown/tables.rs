@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use super::latex;
+use super::links::{emit_linked_line, LinkId, LinkRegistry, LinkSpan, LinkedSpan};
 use super::spans::{normalize_html_tag, HtmlBufferKind, HtmlTagName, HtmlTagOutcome};
 use super::table_layout::{
     align_cell, cap_table_widths, fit_table_widths, fragments_display_width, min_table_cell_width,
@@ -19,7 +20,7 @@ pub(super) struct CellInlineStyle {
     pub(super) italic: u8,
     pub(super) strikethrough: u8,
     pub(super) underline: u8,
-    pub(super) link: bool,
+    pub(super) link_id: Option<LinkId>,
 }
 
 impl CellInlineStyle {
@@ -39,41 +40,56 @@ impl CellInlineStyle {
         }
         m
     }
+
+    pub(super) fn is_link(&self) -> bool {
+        self.link_id.is_some()
+    }
 }
 
 #[derive(Clone)]
 pub(super) enum CellFragment {
-    Text(String, CellInlineStyle, bool),
-    Code(String, bool),
-    InlineMath(String, bool),
-    LinkMarker(CellInlineStyle),
-    Mark(String, bool),
-    HardBreak,
+    Text(String, CellInlineStyle, bool, Option<LinkId>),
+    Code(String, bool, Option<LinkId>),
+    InlineMath(String, bool, Option<LinkId>),
+    LinkMarker(CellInlineStyle, Option<LinkId>),
+    Mark(String, bool, Option<LinkId>),
+    HardBreak(Option<LinkId>),
 }
 
 impl CellFragment {
     pub(super) fn rendered_text(&self) -> String {
         match self {
-            CellFragment::Text(t, _, _) | CellFragment::Code(t, _) | CellFragment::Mark(t, _) => {
-                t.clone()
-            }
-            CellFragment::InlineMath(t, _) => latex::to_unicode(t),
-            CellFragment::LinkMarker(_) => super::LINK_MARKER.to_string(),
-            CellFragment::HardBreak => String::new(),
+            CellFragment::Text(t, _, _, _)
+            | CellFragment::Code(t, _, _)
+            | CellFragment::Mark(t, _, _) => t.clone(),
+            CellFragment::InlineMath(t, _, _) => latex::to_unicode(t),
+            CellFragment::LinkMarker(_, _) => super::LINK_MARKER.to_string(),
+            CellFragment::HardBreak(_) => String::new(),
         }
     }
 
     pub(super) fn display_width(&self) -> usize {
         let w = display_width(&self.rendered_text());
         match self {
-            CellFragment::Text(_, _, _) | CellFragment::LinkMarker(_) => w,
-            CellFragment::HardBreak => 0,
+            CellFragment::Text(_, _, _, _) | CellFragment::LinkMarker(_, _) => w,
+            CellFragment::HardBreak(_) => 0,
             _ => w + 2,
         }
     }
 
+    pub(super) fn link_id(&self) -> Option<LinkId> {
+        match self {
+            CellFragment::Text(_, _, _, id)
+            | CellFragment::Code(_, _, id)
+            | CellFragment::InlineMath(_, _, id)
+            | CellFragment::Mark(_, _, id)
+            | CellFragment::HardBreak(id) => *id,
+            CellFragment::LinkMarker(_, id) => *id,
+        }
+    }
+
     pub(super) fn is_text(&self) -> bool {
-        matches!(self, CellFragment::Text(_, _, _))
+        matches!(self, CellFragment::Text(_, _, _, _))
     }
 }
 
@@ -85,7 +101,7 @@ pub(super) struct TableBuf {
     current_cell: Vec<CellFragment>,
     pub(super) in_header: bool,
     inline_style: CellInlineStyle,
-    html_style_buffer: Option<(HtmlBufferKind, String)>,
+    html_style_buffer: Option<(HtmlBufferKind, Option<LinkId>, String)>,
     key_column: Option<usize>,
     fill_width: bool,
 }
@@ -102,7 +118,8 @@ pub(super) fn handle_table_event(
     ev: &MdEvent<'_>,
     lines: &mut Vec<Line<'static>>,
     render_width: usize,
-    link_urls: &mut Vec<String>,
+    registry: &mut LinkRegistry,
+    link_spans: &mut Vec<LinkSpan>,
 ) -> bool {
     let Some(tb) = table.as_mut() else {
         return false;
@@ -141,7 +158,7 @@ pub(super) fn handle_table_event(
         }
         MdEvent::Start(Tag::Strong) => {
             tb.inline_style.bold = tb.inline_style.bold.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| s.bold = s.bold.saturating_add(1));
             }
             true
@@ -152,7 +169,7 @@ pub(super) fn handle_table_event(
         }
         MdEvent::Start(Tag::Emphasis) => {
             tb.inline_style.italic = tb.inline_style.italic.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| s.italic = s.italic.saturating_add(1));
             }
             true
@@ -163,7 +180,7 @@ pub(super) fn handle_table_event(
         }
         MdEvent::Start(Tag::Strikethrough) => {
             tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| {
                     s.strikethrough = s.strikethrough.saturating_add(1)
                 });
@@ -175,13 +192,13 @@ pub(super) fn handle_table_event(
             true
         }
         MdEvent::Start(Tag::Link { dest_url, .. }) => {
-            tb.inline_style.link = true;
+            let link_id = registry.register(dest_url.as_ref());
+            tb.inline_style.link_id = Some(link_id);
             tb.push_link_marker();
-            link_urls.push(dest_url.to_string());
             true
         }
         MdEvent::End(TagEnd::Link) => {
-            tb.inline_style.link = false;
+            tb.inline_style.link_id = None;
             true
         }
         MdEvent::InlineHtml(raw) => {
@@ -189,11 +206,11 @@ pub(super) fn handle_table_event(
                 HtmlTagOutcome::Consumed => {}
                 HtmlTagOutcome::OpenStyleBuffer(kind) => {
                     if tb.html_style_buffer.is_none() {
-                        tb.html_style_buffer = Some((kind, String::new()));
+                        tb.html_style_buffer = Some((kind, tb.inline_style.link_id, String::new()));
                     }
                 }
                 HtmlTagOutcome::CloseStyleBuffer(kind) => {
-                    if matches!(&tb.html_style_buffer, Some((k, _)) if *k == kind) {
+                    if matches!(&tb.html_style_buffer, Some((k, _, _)) if *k == kind) {
                         tb.flush_html_style_buffer();
                     }
                 }
@@ -208,8 +225,7 @@ pub(super) fn handle_table_event(
             true
         }
         MdEvent::End(TagEnd::Table) => {
-            let rendered = tb.render(render_width);
-            lines.extend(rendered);
+            tb.render_with_ranges(render_width, lines, link_spans);
             *table = None;
             true
         }
@@ -228,7 +244,7 @@ pub(super) fn handle_html_tag_event_cell(raw: &str, tb: &mut TableBuf) -> HtmlTa
     match (tag, is_open) {
         (HtmlTagName::Bold, true) => {
             tb.inline_style.bold = tb.inline_style.bold.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| s.bold = s.bold.saturating_add(1));
             }
         }
@@ -237,7 +253,7 @@ pub(super) fn handle_html_tag_event_cell(raw: &str, tb: &mut TableBuf) -> HtmlTa
         }
         (HtmlTagName::Italic, true) => {
             tb.inline_style.italic = tb.inline_style.italic.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| s.italic = s.italic.saturating_add(1));
             }
         }
@@ -246,7 +262,7 @@ pub(super) fn handle_html_tag_event_cell(raw: &str, tb: &mut TableBuf) -> HtmlTa
         }
         (HtmlTagName::Strike, true) => {
             tb.inline_style.strikethrough = tb.inline_style.strikethrough.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| {
                     s.strikethrough = s.strikethrough.saturating_add(1)
                 });
@@ -257,7 +273,7 @@ pub(super) fn handle_html_tag_event_cell(raw: &str, tb: &mut TableBuf) -> HtmlTa
         }
         (HtmlTagName::Underline, true) => {
             tb.inline_style.underline = tb.inline_style.underline.saturating_add(1);
-            if tb.inline_style.link {
+            if tb.inline_style.is_link() {
                 tb.update_link_marker_modifier(|s| s.underline = s.underline.saturating_add(1));
             }
         }
@@ -301,8 +317,8 @@ impl TableBuf {
                 .iter()
                 .map(|(k, v)| {
                     vec![
-                        vec![CellFragment::Text(k.clone(), style, false)],
-                        vec![CellFragment::Text(v.clone(), style, false)],
+                        vec![CellFragment::Text(k.clone(), style, false, None)],
+                        vec![CellFragment::Text(v.clone(), style, false, None)],
                     ]
                 })
                 .collect();
@@ -322,11 +338,11 @@ impl TableBuf {
             let alignments = vec![Alignment::None; pairs.len()];
             let header_row: Vec<Vec<CellFragment>> = pairs
                 .iter()
-                .map(|(k, _)| vec![CellFragment::Text(k.clone(), style, false)])
+                .map(|(k, _)| vec![CellFragment::Text(k.clone(), style, false, None)])
                 .collect();
             let data_row: Vec<Vec<CellFragment>> = pairs
                 .iter()
-                .map(|(_, v)| vec![CellFragment::Text(v.clone(), style, false)])
+                .map(|(_, v)| vec![CellFragment::Text(v.clone(), style, false, None)])
                 .collect();
             Self {
                 alignments,
@@ -344,7 +360,9 @@ impl TableBuf {
     }
     fn prev_ends_without_ws(&self) -> bool {
         match self.current_cell.last() {
-            Some(CellFragment::Text(s, _, _)) => !s.is_empty() && !s.ends_with(char::is_whitespace),
+            Some(CellFragment::Text(s, _, _, _)) => {
+                !s.is_empty() && !s.ends_with(char::is_whitespace)
+            }
             Some(_) => true,
             None => false,
         }
@@ -352,7 +370,7 @@ impl TableBuf {
     fn push_text(&mut self, t: &str) {
         use super::markers::{split_marker_segments, MarkerSegment, MARK_MARKER};
 
-        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+        if let Some((_, _, buf)) = self.html_style_buffer.as_mut() {
             buf.push_str(t);
             return;
         }
@@ -368,71 +386,89 @@ impl TableBuf {
             first = false;
             match seg {
                 MarkerSegment::Text(s) => {
-                    self.current_cell
-                        .push(CellFragment::Text(s.to_string(), style, adj_flag));
+                    self.current_cell.push(CellFragment::Text(
+                        s.to_string(),
+                        style,
+                        adj_flag,
+                        style.link_id,
+                    ));
                 }
                 MarkerSegment::Mark(s) => {
-                    self.current_cell
-                        .push(CellFragment::Mark(s.to_string(), adj_flag));
+                    self.current_cell.push(CellFragment::Mark(
+                        s.to_string(),
+                        adj_flag,
+                        style.link_id,
+                    ));
                 }
             }
         }
     }
     fn push_link_marker(&mut self) {
-        self.current_cell
-            .push(CellFragment::LinkMarker(self.inline_style));
+        self.current_cell.push(CellFragment::LinkMarker(
+            self.inline_style,
+            self.inline_style.link_id,
+        ));
     }
     fn update_link_marker_modifier(&mut self, f: impl Fn(&mut CellInlineStyle)) {
-        if let Some(CellFragment::LinkMarker(ref mut style)) = self
+        if let Some(CellFragment::LinkMarker(ref mut style, _)) = self
             .current_cell
             .iter_mut()
             .rev()
-            .find(|frag| matches!(frag, CellFragment::LinkMarker(_)))
+            .find(|frag| matches!(frag, CellFragment::LinkMarker(_, _)))
         {
             f(style);
         }
     }
     fn push_code(&mut self, t: &str) {
-        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+        if let Some((_, _, buf)) = self.html_style_buffer.as_mut() {
             buf.push_str(t);
             return;
         }
         let adjacent = self.prev_ends_without_ws();
-        self.current_cell
-            .push(CellFragment::Code(t.to_string(), adjacent));
+        self.current_cell.push(CellFragment::Code(
+            t.to_string(),
+            adjacent,
+            self.inline_style.link_id,
+        ));
     }
     fn push_inline_math(&mut self, t: &str) {
-        if let Some((_, buf)) = self.html_style_buffer.as_mut() {
+        if let Some((_, _, buf)) = self.html_style_buffer.as_mut() {
             buf.push_str(t);
             return;
         }
         let adjacent = self.prev_ends_without_ws();
-        self.current_cell
-            .push(CellFragment::InlineMath(t.to_string(), adjacent));
+        self.current_cell.push(CellFragment::InlineMath(
+            t.to_string(),
+            adjacent,
+            self.inline_style.link_id,
+        ));
     }
     fn flush_html_style_buffer(&mut self) {
-        if let Some((kind, text)) = self.html_style_buffer.take() {
+        if let Some((kind, link_id, text)) = self.html_style_buffer.take() {
             let adjacent = self.prev_ends_without_ws();
             match kind {
                 HtmlBufferKind::Mark => {
-                    self.current_cell.push(CellFragment::Mark(text, adjacent));
+                    self.current_cell
+                        .push(CellFragment::Mark(text, adjacent, link_id));
                 }
                 HtmlBufferKind::Code => {
-                    self.current_cell.push(CellFragment::Code(text, adjacent));
+                    self.current_cell
+                        .push(CellFragment::Code(text, adjacent, link_id));
                 }
             }
         }
     }
     fn push_hard_break(&mut self) {
-        self.current_cell.push(CellFragment::HardBreak);
+        self.current_cell
+            .push(CellFragment::HardBreak(self.inline_style.link_id));
     }
     fn end_cell(&mut self) {
         self.flush_html_style_buffer();
         let mut frags = std::mem::take(&mut self.current_cell);
-        if let Some(CellFragment::Text(t, _, _)) = frags.first_mut() {
+        if let Some(CellFragment::Text(t, _, _, _)) = frags.first_mut() {
             *t = t.trim_start().to_string();
         }
-        if let Some(CellFragment::Text(t, _, _)) = frags.last_mut() {
+        if let Some(CellFragment::Text(t, _, _, _)) = frags.last_mut() {
             *t = t.trim_end().to_string();
         }
         self.current_row.push(frags);
@@ -451,14 +487,26 @@ impl TableBuf {
     }
 
     pub(crate) fn render(&self, render_width: usize) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        let mut ranges = Vec::new();
+        self.render_with_ranges(render_width, &mut lines, &mut ranges);
+        lines
+    }
+
+    pub(super) fn render_with_ranges(
+        &self,
+        render_width: usize,
+        lines: &mut Vec<Line<'static>>,
+        ranges: &mut Vec<LinkSpan>,
+    ) {
         let app_theme = app_theme();
         let theme = &app_theme.markdown;
         if self.rows.is_empty() {
-            return vec![];
+            return;
         }
         let col_count = self.rows.iter().map(|r| r.len()).max().unwrap_or(0);
         if col_count == 0 {
-            return vec![];
+            return;
         }
 
         let mut col_widths: Vec<usize> = vec![1; col_count];
@@ -497,8 +545,7 @@ impl TableBuf {
         let cell = Style::default().fg(theme.table_cell);
         let ind = "";
 
-        let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(self.hline(
+        lines.push(self.hline(
             ind,
             TableBorder {
                 left: "┌",
@@ -527,7 +574,10 @@ impl TableBuf {
                 .unwrap_or(1);
 
             for line_idx in 0..row_height {
-                let mut spans = vec![Span::raw(ind), Span::styled("│", border)];
+                let mut linked_spans = vec![
+                    LinkedSpan::new(Span::raw(ind), None),
+                    LinkedSpan::new(Span::styled("│", border), None),
+                ];
                 for (ci, width) in col_widths.iter().copied().enumerate().take(col_count) {
                     let frags = wrapped_cells[ci].get(line_idx).unwrap_or(&empty_cell);
                     let align = self.alignments.get(ci).copied().unwrap_or(Alignment::None);
@@ -535,16 +585,16 @@ impl TableBuf {
                     let base_style = if is_hdr || is_key_col { header } else { cell };
                     let cell_spans =
                         align_cell(frags, width, align, base_style, is_hdr || is_key_col, theme);
-                    spans.push(Span::raw(" "));
-                    spans.extend(cell_spans);
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled("│", border));
+                    linked_spans.push(LinkedSpan::new(Span::raw(" "), None));
+                    linked_spans.extend(cell_spans);
+                    linked_spans.push(LinkedSpan::new(Span::raw(" "), None));
+                    linked_spans.push(LinkedSpan::new(Span::styled("│", border), None));
                 }
-                out.push(Line::from(spans));
+                emit_linked_line(lines, ranges, linked_spans);
             }
 
             if is_hdr && ri == self.header_count - 1 {
-                out.push(self.hline(
+                lines.push(self.hline(
                     ind,
                     TableBorder {
                         left: "╞",
@@ -556,7 +606,7 @@ impl TableBuf {
                     sep,
                 ));
             } else if !is_hdr && ri < self.rows.len() - 1 {
-                out.push(self.hline(
+                lines.push(self.hline(
                     ind,
                     TableBorder {
                         left: "├",
@@ -570,7 +620,7 @@ impl TableBuf {
             }
         }
 
-        out.push(self.hline(
+        lines.push(self.hline(
             ind,
             TableBorder {
                 left: "└",
@@ -581,8 +631,7 @@ impl TableBuf {
             &col_widths,
             border,
         ));
-        out.push(Line::from(""));
-        out
+        lines.push(Line::from(""));
     }
 
     fn hline(
