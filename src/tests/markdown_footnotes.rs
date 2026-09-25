@@ -162,3 +162,48 @@ fn unreferenced_definition_appears_in_notes_after_referenced_ones() {
         "orphan definition should carry superscript ², got {second_line:?}"
     );
 }
+
+#[test]
+fn reordered_footnote_links_keep_explicit_occurrence_ranges() {
+    let (ss, theme) = test_assets();
+    let src = "Body references[^second] before[^first].\n\n[^first]: First [F](https://example.test/first).\n\n[^second]: Second [S](https://example.test/second).\n";
+    let parsed = crate::markdown::parse_markdown(src, &ss, &theme, &test_md_theme(), false, true);
+
+    assert_eq!(parsed.link_occurrences.len(), 2);
+    assert_eq!(
+        parsed
+            .link_occurrences
+            .iter()
+            .map(|occurrence| occurrence.destination.as_str())
+            .collect::<Vec<_>>(),
+        vec!["https://example.test/first", "https://example.test/second"]
+    );
+
+    let range_destinations: Vec<&str> = parsed
+        .link_spans
+        .iter()
+        .map(|span| {
+            parsed.link_occurrences[span.occurrence_id.0]
+                .destination
+                .as_str()
+        })
+        .collect();
+    assert!(
+        range_destinations
+            .iter()
+            .position(|destination| *destination == "https://example.test/second")
+            .is_some_and(|second| {
+                range_destinations
+                    .iter()
+                    .position(|destination| *destination == "https://example.test/first")
+                    .is_some_and(|first| second < first)
+            }),
+        "note ranges should follow reference order, got {range_destinations:?}"
+    );
+    for occurrence in &parsed.link_occurrences {
+        assert!(parsed
+            .link_spans
+            .iter()
+            .any(|span| span.occurrence_id == occurrence.id));
+    }
+}

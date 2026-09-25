@@ -1,6 +1,8 @@
 use crate::theme::MarkdownTheme;
 use ratatui::{style::Style, text::Span};
 
+use super::links::{LinkId, LinkedSpan};
+
 pub(super) struct CustomMarker {
     pub(super) open: &'static str,
     pub(super) close: &'static str,
@@ -49,7 +51,7 @@ fn find_valid_match<'a>(text: &str, marker: &'a CustomMarker) -> Option<MarkerMa
 }
 
 fn find_first_marker<'a>(text: &str, markers: &'a [CustomMarker]) -> Option<MarkerMatch<'a>> {
-    let mut best: Option<MarkerMatch<'a>> = None;
+    let mut best: Option<MarkerMatch> = None;
 
     for marker in markers {
         if let Some(candidate) = find_valid_match(text, marker) {
@@ -65,18 +67,24 @@ fn find_first_marker<'a>(text: &str, markers: &'a [CustomMarker]) -> Option<Mark
     best
 }
 
+/// Split text into styled fragments while preserving the active parser-level
+/// link owner on both ordinary and marker-rendered output.
 pub(super) fn push_custom_marker_spans(
     text: &str,
     markers: &[CustomMarker],
     fallback_style: Style,
     theme: &MarkdownTheme,
-    spans: &mut Vec<Span<'static>>,
+    link_id: Option<LinkId>,
+    spans: &mut Vec<LinkedSpan>,
 ) {
     let mut remaining = text;
 
     while !remaining.is_empty() {
         let Some(m) = find_first_marker(remaining, markers) else {
-            spans.push(Span::styled(remaining.to_string(), fallback_style));
+            spans.push(LinkedSpan::new(
+                Span::styled(remaining.to_string(), fallback_style),
+                link_id,
+            ));
             break;
         };
 
@@ -85,18 +93,21 @@ pub(super) fn push_custom_marker_spans(
         let after_close = after_open + m.close_rel + m.marker.close.len();
 
         if m.open_pos > 0 {
-            spans.push(Span::styled(
-                remaining[..m.open_pos].to_string(),
-                fallback_style,
+            spans.push(LinkedSpan::new(
+                Span::styled(remaining[..m.open_pos].to_string(), fallback_style),
+                link_id,
             ));
         }
 
         let display = if m.marker.pad {
-            format!(" {} ", content)
+            format!(" {content} ")
         } else {
             content.to_string()
         };
-        spans.push(Span::styled(display, (m.marker.style_fn)(theme)));
+        spans.push(LinkedSpan::new(
+            Span::styled(display, (m.marker.style_fn)(theme)),
+            link_id,
+        ));
 
         remaining = &remaining[after_close..];
     }
@@ -147,9 +158,9 @@ mod tests {
         Style::default()
     }
 
-    fn collect(text: &str, markers: &[CustomMarker], theme: &MarkdownTheme) -> Vec<Span<'static>> {
+    fn collect(text: &str, markers: &[CustomMarker], theme: &MarkdownTheme) -> Vec<LinkedSpan> {
         let mut spans = Vec::new();
-        push_custom_marker_spans(text, markers, fallback(), theme, &mut spans);
+        push_custom_marker_spans(text, markers, fallback(), theme, None, &mut spans);
         spans
     }
 
@@ -158,7 +169,7 @@ mod tests {
         let theme = test_theme();
         let spans = collect("hello world", &[], &theme);
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].content.as_ref(), "hello world");
+        assert_eq!(spans[0].span.content.as_ref(), "hello world");
     }
 
     #[test]
@@ -166,10 +177,10 @@ mod tests {
         let theme = test_theme();
         let spans = collect("before ==marked== after", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 3);
-        assert_eq!(spans[0].content.as_ref(), "before ");
-        assert_eq!(spans[1].content.as_ref(), " marked ");
-        assert!(spans[1].style.bg.is_some());
-        assert_eq!(spans[2].content.as_ref(), " after");
+        assert_eq!(spans[0].span.content.as_ref(), "before ");
+        assert_eq!(spans[1].span.content.as_ref(), " marked ");
+        assert!(spans[1].span.style.bg.is_some());
+        assert_eq!(spans[2].span.content.as_ref(), " after");
     }
 
     #[test]
@@ -177,9 +188,9 @@ mod tests {
         let theme = test_theme();
         let spans = collect("==one== ==two==", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 3);
-        assert_eq!(spans[0].content.as_ref(), " one ");
-        assert_eq!(spans[1].content.as_ref(), " ");
-        assert_eq!(spans[2].content.as_ref(), " two ");
+        assert_eq!(spans[0].span.content.as_ref(), " one ");
+        assert_eq!(spans[1].span.content.as_ref(), " ");
+        assert_eq!(spans[2].span.content.as_ref(), " two ");
     }
 
     #[test]
@@ -187,7 +198,7 @@ mod tests {
         let theme = test_theme();
         let spans = collect("==unclosed", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].content.as_ref(), "==unclosed");
+        assert_eq!(spans[0].span.content.as_ref(), "==unclosed");
     }
 
     #[test]
@@ -195,7 +206,7 @@ mod tests {
         let theme = test_theme();
         let spans = collect("====", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].content.as_ref(), "====");
+        assert_eq!(spans[0].span.content.as_ref(), "====");
     }
 
     #[test]
@@ -203,7 +214,7 @@ mod tests {
         let theme = test_theme();
         let spans = collect("== text ==", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].content.as_ref(), "== text ==");
+        assert_eq!(spans[0].span.content.as_ref(), "== text ==");
     }
 
     #[test]
@@ -211,10 +222,10 @@ mod tests {
         let theme = test_theme();
         let spans = collect("x == y and ==marked== end", &[MARK_MARKER], &theme);
         assert_eq!(spans.len(), 3);
-        assert_eq!(spans[0].content.as_ref(), "x == y and ");
-        assert_eq!(spans[1].content.as_ref(), " marked ");
-        assert!(spans[1].style.bg.is_some());
-        assert_eq!(spans[2].content.as_ref(), " end");
+        assert_eq!(spans[0].span.content.as_ref(), "x == y and ");
+        assert_eq!(spans[1].span.content.as_ref(), " marked ");
+        assert!(spans[1].span.style.bg.is_some());
+        assert_eq!(spans[2].span.content.as_ref(), " end");
     }
 
     #[test]

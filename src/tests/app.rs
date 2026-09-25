@@ -1,9 +1,11 @@
-use super::{test_assets, test_md_theme};
+use super::{lock_theme_test_state, test_assets, test_md_theme};
 use crate::app::{App, AppConfig, FileChange};
 use crate::cli::parse_cli;
 use crate::markdown::{hash_str, parse_markdown, parse_markdown_with_width, read_file_state};
+use crate::theme::{current_theme_selection, set_theme_preset, set_theme_selection};
 use crate::*;
 use crossterm::event::KeyEventKind;
+use ratatui::layout::Rect;
 use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},
@@ -919,4 +921,62 @@ fn main_line_numbers_config_initializes_and_preserves_across_load_path() {
 
     let _ = fs::remove_file(path1);
     let _ = fs::remove_file(path2);
+}
+
+#[test]
+fn cached_theme_switch_cancel_restores_link_registry() {
+    let _guard = lock_theme_test_state();
+    let original = current_theme_selection();
+    set_theme_preset(ThemePreset::OceanDark);
+
+    let (ss, theme) = test_assets();
+    let ts = ThemeSet::load_defaults();
+    let source = "[target](https://example.test)\n";
+    let parsed = parse_markdown_with_width(source, &ss, &theme, 80, &test_md_theme(), false, true);
+    let mut app = App::new_with_source(
+        Vec::new(),
+        Vec::new(),
+        AppConfig {
+            filename: "links.md".to_string(),
+            source: source.to_string(),
+            debug_input: false,
+            watch: false,
+            filepath: None,
+            last_file_state: None,
+        },
+    );
+    app.replace_content(parsed);
+    app.content_area = Rect::new(0, 0, 80, 4);
+    app.enter_link_mode();
+    assert_eq!(
+        app.selected_link_destination(),
+        Some("https://example.test")
+    );
+
+    app.open_theme_picker();
+    assert!(app.has_cached_theme_preview(ThemePreset::OceanDark));
+    assert!(!app.is_link_mode());
+    app.preview_theme_preset(ThemePreset::Forest, &ss, &ts);
+    assert!(app.has_cached_theme_preview(ThemePreset::Forest));
+    app.preview_theme_preset(ThemePreset::OceanDark, &ss, &ts);
+    app.restore_theme_picker_preview(&ss, &ts);
+
+    assert!(!app.is_theme_picker_open());
+    assert!(!app.is_link_mode());
+    assert_eq!(app.link_occurrences.len(), 1);
+    assert_eq!(
+        app.link_spans_by_line
+            .values()
+            .map(|spans| spans.len())
+            .sum::<usize>(),
+        1
+    );
+    app.enter_link_mode();
+    assert_eq!(
+        app.selected_link_destination(),
+        Some("https://example.test")
+    );
+    app.exit_link_mode();
+
+    set_theme_selection(original);
 }

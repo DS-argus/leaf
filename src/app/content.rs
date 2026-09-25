@@ -31,10 +31,13 @@ impl App {
             lines,
             toc,
             link_spans,
+            link_occurrences,
             line_number_map,
             source_line_map,
             code_blocks,
         } = parsed;
+        self.exit_link_mode();
+        self.visual_scroll_offset = 0;
 
         self.plain_lines = build_searchable_lines(&lines)
             .into_iter()
@@ -44,7 +47,7 @@ impl App {
         self.toc = toc;
         self.highlighted_line_cache = None;
         self.toc_header_line = toc_header_line();
-        self.link_spans_by_line = super::links::link_spans_to_map(link_spans);
+        self.set_links(link_occurrences, link_spans);
         self.hovered_link = None;
         self.set_code_blocks(code_blocks);
         self.code_select = None;
@@ -128,7 +131,12 @@ impl App {
         self.reset_search_state();
         self.clear_active_goto_line();
         self.invalidate_theme_preview_cache();
-        self.store_current_theme_preview_from(&parsed.lines, &parsed.toc);
+        self.store_current_theme_preview_from(
+            &parsed.lines,
+            &parsed.toc,
+            &parsed.link_occurrences,
+            &parsed.link_spans,
+        );
         self.replace_content(parsed);
         self.clear_toc_scroll_state();
         true
@@ -156,7 +164,12 @@ impl App {
         }
 
         self.invalidate_theme_preview_cache();
-        self.store_current_theme_preview_from(&parsed.lines, &parsed.toc);
+        self.store_current_theme_preview_from(
+            &parsed.lines,
+            &parsed.toc,
+            &parsed.link_occurrences,
+            &parsed.link_spans,
+        );
         self.replace_content(parsed);
         self.goto_line.target = None;
         self.goto_line.error = false;
@@ -214,7 +227,12 @@ impl App {
             return false;
         }
         self.render_width = next_width;
+        let selected = self.selected_link;
         self.reparse_source(ss, themes);
+        if let Some(id) = selected.filter(|id| self.link_order.contains(id)) {
+            self.selected_link = Some(id);
+            self.reveal_selected_link();
+        }
         true
     }
 }

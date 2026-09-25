@@ -1,4 +1,5 @@
 mod content;
+pub(crate) mod link_geometry;
 mod popup;
 mod popup_picker;
 mod status;
@@ -41,7 +42,11 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
         app.toc_list_area = None;
     }
 
+    let viewport_changed = app.content_area != content_area;
     app.content_area = content_area;
+    if viewport_changed {
+        app.reveal_selected_link();
+    }
     content::render_content_panel(f, app, content_area);
     content::render_status_bar(f, app, root[1]);
 

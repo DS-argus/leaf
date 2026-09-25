@@ -335,10 +335,31 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 | `Ctrl+L` / `:` | Go to line | `Ctrl+E` | Open in editor |
 | `Ctrl+F` / `/` | Find | `Ctrl+Click` | Open link |
 | `n` / `N` | Next / prev match | `Double-Click` (link) | Copy link |
+| `f` | Enter keyboard link navigation |  |  |
 | `w` | Toggle watch mode | `Double-Click` (code) | Copy code block |
 | `r` | Force reload (watch mode) | `Shift+Drag` | Select text |
 | `t` | Toggle TOC sidebar | `Option+Drag` | Select text (iTerm2) |
 | `q` | Quit |  |  |
+
+### Keyboard link navigation
+
+Press `f` to focus the first link visible in the current view. If no link is visible,
+Leaf selects the next link below; when none remains below, it keeps your position.
+In link mode, `n` / `N` move forward / backward and wrap at both document ends.
+The focused destination appears in the existing status bar without expanding the body.
+
+- `Enter`: copy the complete destination and stay in link mode.
+- `o`: request opening an absolute HTTP(S) link in your default browser.
+- The status bar stays on one line and clips at the right edge, like normal search. `Enter` still copies the entire URL.
+- `f`, `Esc`, or `Ctrl+C`: leave link mode and keep the current reading position.
+- `q` / `Q`: quit Leaf directly from link mode.
+
+Repeated destinations are separate links; wrapped labels are one link. Relative paths,
+anchors, and other schemes can be inspected and copied, but `o` does not open them.
+Link mode also works with mouse capture disabled. Normal Leaf commands remain available:
+`j/k`, `d/u`, arrows, and page/home/end keys scroll freely; `Ctrl+E` opens the editor.
+`n/N` explicitly return to link navigation and reveal the selected destination.
+Search, go-to-line, and other input modes use their normal shortcuts. No setting or CLI option is required.
 
 ## Features
 

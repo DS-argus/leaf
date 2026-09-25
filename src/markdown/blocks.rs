@@ -7,6 +7,7 @@ use syntect::{highlighting::Theme, parsing::SyntaxSet};
 use unicode_width::UnicodeWidthStr;
 
 use super::latex;
+use super::links::{emit_linked_line, LinkSpan, LinkedSpan};
 use super::lists::{list_item_prefix, ItemState, ListKind};
 use super::mermaid;
 use super::syntax::highlight_code;
@@ -46,31 +47,44 @@ fn is_blockquote_blank_text(plain: &str) -> bool {
     !plain.is_empty() && plain.chars().all(|c| c == '▏' || c.is_whitespace())
 }
 
-pub(super) fn pop_trailing_blockquote_gap(lines: &mut Vec<Line<'static>>) {
+pub(super) fn pop_trailing_blockquote_gap(
+    lines: &mut Vec<Line<'static>>,
+    ranges: &mut Vec<LinkSpan>,
+) {
     if lines
         .last()
         .is_some_and(|line| is_blockquote_blank_text(&super::width::line_plain_text(line)))
     {
         lines.pop();
+        let removed = lines.len();
+        ranges.retain(|range| range.line_idx != removed);
     }
 }
 
 pub(super) fn push_wrapped_blockquote_lines(
     lines: &mut Vec<Line<'static>>,
-    body_spans: &mut Vec<Span<'static>>,
+    ranges: &mut Vec<LinkSpan>,
+    body_spans: &mut Vec<LinkedSpan>,
     blockquote_depth: usize,
     render_width: usize,
     theme: &MarkdownTheme,
     marker_color: Option<Color>,
 ) {
     let prefix = block_prefix(blockquote_depth, theme, marker_color);
-    push_wrapped_prefixed_lines(lines, body_spans, prefix.clone(), prefix, render_width);
+    push_wrapped_prefixed_lines(
+        lines,
+        ranges,
+        body_spans,
+        prefix.clone(),
+        prefix,
+        render_width,
+    );
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn flush_wrapped_spans(
     lines: &mut Vec<Line<'static>>,
-    spans: &mut Vec<Span<'static>>,
+    ranges: &mut Vec<LinkSpan>,
+    spans: &mut Vec<LinkedSpan>,
     blockquote_depth: usize,
     list_stack: &[ListKind],
     item_stack: &mut [ItemState],
@@ -81,6 +95,7 @@ pub(super) fn flush_wrapped_spans(
     if blockquote_depth > 0 && item_stack.is_empty() {
         push_wrapped_blockquote_lines(
             lines,
+            ranges,
             spans,
             blockquote_depth,
             render_width,
@@ -104,18 +119,20 @@ pub(super) fn flush_wrapped_spans(
         );
         push_wrapped_prefixed_lines(
             lines,
+            ranges,
             spans,
             first_prefix,
             continuation_prefix,
             render_width,
         );
     } else if !spans.is_empty() {
-        push_wrapped_prefixed_lines(lines, spans, vec![], vec![], render_width);
+        push_wrapped_prefixed_lines(lines, ranges, spans, vec![], vec![], render_width);
     }
 }
 
 pub(super) fn trim_paragraph_gap_before_block(
     lines: &mut Vec<Line<'static>>,
+    ranges: &mut Vec<LinkSpan>,
     last_block: LastBlock,
 ) {
     if matches!(last_block, LastBlock::Paragraph | LastBlock::Blockquote)
@@ -124,14 +141,17 @@ pub(super) fn trim_paragraph_gap_before_block(
             plain.is_empty() || is_blockquote_blank_text(&plain)
         })
     {
+        let removed = lines.len().saturating_sub(1);
+        ranges.retain(|range| range.line_idx != removed);
         lines.pop();
     }
 }
 
 pub(super) fn push_heading_lines(
     lines: &mut Vec<Line<'static>>,
+    ranges: &mut Vec<LinkSpan>,
     toc: &mut Vec<TocEntry>,
-    spans: &mut Vec<Span<'static>>,
+    spans: &mut Vec<LinkedSpan>,
     level: u8,
     render_width: usize,
     theme: &MarkdownTheme,
@@ -148,29 +168,32 @@ pub(super) fn push_heading_lines(
         _ => Modifier::ITALIC,
     };
     let heading_style = Style::default().fg(color).add_modifier(modifier);
-    let title: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    let title: String = spans
+        .iter()
+        .map(|linked| linked.span.content.as_ref())
+        .collect();
     toc.push(TocEntry {
         level,
         title: title.clone(),
         line: lines.len(),
     });
-    let styled_spans: Vec<Span<'static>> = spans
+    let styled_spans: Vec<LinkedSpan> = spans
         .drain(..)
-        .map(|span| {
+        .map(|linked| {
             let mut style = heading_style;
-            if span.style.bg.is_some() {
-                style.fg = span.style.fg;
-                style.bg = span.style.bg;
+            if linked.span.style.bg.is_some() {
+                style.fg = linked.span.style.fg;
+                style.bg = linked.span.style.bg;
                 style.sub_modifier = modifier;
-            } else if span.style.fg == Some(theme.link_text)
-                || span.style.fg == Some(theme.link_icon)
+            } else if linked.span.style.fg == Some(theme.link_text)
+                || linked.span.style.fg == Some(theme.link_icon)
             {
-                style.fg = span.style.fg;
+                style.fg = linked.span.style.fg;
             }
-            Span::styled(span.content, style)
+            LinkedSpan::new(Span::styled(linked.span.content, style), linked.link_id)
         })
         .collect();
-    lines.push(Line::from(styled_spans));
+    emit_linked_line(lines, ranges, styled_spans);
 
     match level {
         1 => lines.push(Line::from(Span::styled(

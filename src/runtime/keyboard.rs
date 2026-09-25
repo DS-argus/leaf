@@ -312,6 +312,17 @@ pub(super) fn handle_key_event(
             _ => state_changed = false,
         }
     } else {
+        if app.is_link_mode() && handle_link_navigation_key(app, &key) {
+            return Ok(HandleResult::Continue { redraw: true });
+        }
+        if key.code == KeyCode::Char('f')
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            app.enter_link_mode();
+            return Ok(HandleResult::Continue { redraw: true });
+        }
         let mut mode_exited = false;
         if app.is_code_select_mode() {
             let mode_handled = handle_code_select_key(app, &key);
@@ -320,6 +331,7 @@ pub(super) fn handle_key_event(
             }
             mode_exited = app.exit_code_select_mode();
         } else if try_code_select_entry(app, &key) {
+            app.exit_link_mode();
             return Ok(HandleResult::Continue { redraw: true });
         }
         match key.code {
@@ -497,4 +509,21 @@ fn try_code_select_entry(app: &mut App, key: &KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+fn handle_link_navigation_key(app: &mut App, key: &KeyEvent) -> bool {
+    let plain = !key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+    match key.code {
+        KeyCode::Esc => app.exit_link_mode(),
+        KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => app.exit_link_mode(),
+        KeyCode::Char('n') if plain => app.move_link_focus(true),
+        KeyCode::Char('N') if plain => app.move_link_focus(false),
+        KeyCode::Enter if plain => app.copy_selected_link(),
+        KeyCode::Char('o') if plain => app.open_selected_link(),
+        KeyCode::Char('f') if plain => app.exit_link_mode(),
+        _ => return false,
+    }
+    true
 }

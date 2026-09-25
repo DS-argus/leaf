@@ -84,11 +84,13 @@ impl App {
         self.search.idx = 0;
         if let Some(&f) = self.search.matches.first() {
             self.reset_toc_scroll_mode();
+            self.visual_scroll_offset = 0;
             self.scroll = f.min(self.max_scroll());
         }
     }
 
     pub(crate) fn begin_search(&mut self) {
+        self.exit_link_mode();
         self.reset_numkey_state();
         self.search.mode = true;
         self.search.draft = self.search.query.clone();
@@ -167,6 +169,7 @@ impl App {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
         self.search.idx = (self.search.idx + 1) % self.search.matches.len();
+        self.visual_scroll_offset = 0;
         self.scroll = self.search.matches[self.search.idx].min(self.max_scroll());
     }
 
@@ -181,6 +184,7 @@ impl App {
         } else {
             self.search.idx -= 1;
         }
+        self.visual_scroll_offset = 0;
         self.scroll = self.search.matches[self.search.idx].min(self.max_scroll());
     }
 }

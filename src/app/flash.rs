@@ -26,6 +26,12 @@ pub(crate) enum WatchFlash {
 pub(crate) enum LinkFlash {
     Copied,
     CopyFailed,
+    NoLinks,
+    NoneBelow,
+    NoDisplaySpace,
+    OpenRequested,
+    OpenFailed,
+    UnsupportedTarget,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,6 +151,7 @@ impl App {
 
     pub(crate) fn set_link_flash(&mut self, flash: LinkFlash) {
         self.link_flash = Some((flash, Instant::now()));
+        self.status_cache_key = None;
     }
 
     pub(crate) fn link_flash(&self) -> Option<(&LinkFlash, &Instant)> {
@@ -153,6 +160,7 @@ impl App {
 
     pub(crate) fn clear_link_flash(&mut self) {
         self.link_flash = None;
+        self.status_cache_key = None;
     }
 
     pub(crate) fn set_path_flash(&mut self, flash: PathFlash) {
