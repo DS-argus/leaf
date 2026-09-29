@@ -1,5 +1,5 @@
 use crate::*;
-use std::path::Path;
+use std::{fs, path::Path, process::Command, thread, time::Duration};
 
 #[test]
 fn binary_name_simple() {
@@ -203,11 +203,97 @@ fn try_new_tab_command_windows_terminal_non_wsl_returns_spawn() {
 }
 
 #[test]
-fn try_new_tab_command_kitty_returns_run_and_check() {
-    let emulator = TerminalEmulator::Kitty;
-    let strategy =
-        try_new_tab_command("nano", Path::new("/tmp/test.md"), &emulator, false, None).unwrap();
-    assert!(matches!(strategy, LaunchStrategy::RunAndCheck(_)));
+fn try_new_tab_command_kitty_returns_run_and_check_with_or_without_listen_socket() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    let previous = std::env::var_os("KITTY_LISTEN_ON");
+    std::env::remove_var("KITTY_LISTEN_ON");
+    let without_socket = try_new_tab_command(
+        "nano",
+        Path::new("/tmp/test.md"),
+        &TerminalEmulator::Kitty,
+        false,
+        None,
+    );
+    std::env::set_var("KITTY_LISTEN_ON", "unix:/tmp/kitty-test.sock");
+    let with_socket = try_new_tab_command(
+        "nano",
+        Path::new("/tmp/test.md"),
+        &TerminalEmulator::Kitty,
+        false,
+        None,
+    );
+    if let Some(value) = previous {
+        std::env::set_var("KITTY_LISTEN_ON", value);
+    } else {
+        std::env::remove_var("KITTY_LISTEN_ON");
+    }
+    assert!(matches!(
+        without_socket,
+        Some(LaunchStrategy::RunAndCheck(_))
+    ));
+    assert!(matches!(with_socket, Some(LaunchStrategy::RunAndCheck(_))));
+}
+
+#[test]
+fn timeout_test_child() {
+    let Ok(action) = std::env::var("LEAF_KITTY_TIMEOUT_TEST_ACTION") else {
+        return;
+    };
+    let marker = std::env::var_os("LEAF_KITTY_TIMEOUT_TEST_MARKER")
+        .expect("test marker path should be provided");
+    fs::write(marker, "started").expect("test child should create its marker");
+    match action.as_str() {
+        "hang" => loop {
+            thread::sleep(Duration::from_secs(60));
+        },
+        "failure" => std::process::exit(1),
+        _ => {}
+    }
+}
+
+fn timeout_test_command(action: &str, marker: &Path) -> Command {
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.arg("--exact")
+        .arg("tests::editor::timeout_test_child")
+        .env("LEAF_KITTY_TIMEOUT_TEST_ACTION", action)
+        .env("LEAF_KITTY_TIMEOUT_TEST_MARKER", marker);
+    cmd
+}
+
+#[test]
+fn kitty_new_tab_success_returns_opened() {
+    let marker = crate::tests::unique_temp_dir("leaf-kitty-success").with_extension("started");
+    let strategy = LaunchStrategy::RunAndCheck(timeout_test_command("success", &marker));
+    assert_eq!(
+        crate::editor::result_from_new_tab(Some(strategy), Duration::from_millis(500)),
+        crate::editor::EditorResult::Opened
+    );
+    assert!(marker.is_file());
+    fs::remove_file(marker).unwrap();
+}
+
+#[test]
+fn kitty_new_tab_failure_returns_same_terminal_fallback() {
+    let marker = crate::tests::unique_temp_dir("leaf-kitty-failure").with_extension("started");
+    let strategy = LaunchStrategy::RunAndCheck(timeout_test_command("failure", &marker));
+    assert_eq!(
+        crate::editor::result_from_new_tab(Some(strategy), Duration::from_millis(500)),
+        crate::editor::EditorResult::NeedsSameTerminal
+    );
+    assert!(marker.is_file());
+    fs::remove_file(marker).unwrap();
+}
+
+#[test]
+fn kitty_new_tab_timeout_kills_child_and_returns_same_terminal_fallback() {
+    let marker = crate::tests::unique_temp_dir("leaf-kitty-timeout").with_extension("started");
+    let strategy = LaunchStrategy::RunAndCheck(timeout_test_command("hang", &marker));
+    assert_eq!(
+        crate::editor::result_from_new_tab(Some(strategy), Duration::from_millis(500)),
+        crate::editor::EditorResult::NeedsSameTerminal
+    );
+    assert!(marker.is_file());
+    fs::remove_file(marker).unwrap();
 }
 
 #[test]
@@ -528,8 +614,8 @@ fn kitty_tab_title_uses_filename() {
         &TerminalEmulator::Kitty,
         false,
         None,
-    )
-    .unwrap();
+    );
+    let strategy = strategy.unwrap();
     let cmd = match strategy {
         LaunchStrategy::RunAndCheck(cmd) => cmd,
         LaunchStrategy::SpawnAndAssume(_) => panic!("expected RunAndCheck for Kitty"),
