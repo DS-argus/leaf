@@ -365,7 +365,7 @@ text = "#ebdbb2"
 heading_1 = "#fabd2f"
 ```
 
-See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available color keys.
+See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available color keys, or explore community themes like [Rosé Pine](https://github.com/rose-pine/leaf).
 
 ## Keybindings
 
