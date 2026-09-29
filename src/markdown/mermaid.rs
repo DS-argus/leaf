@@ -6,50 +6,81 @@ use std::fmt::Write;
 use super::width::{display_width, iter_cluster_widths, truncate_display_width};
 use unicode_segmentation::UnicodeSegmentation;
 
-pub(crate) fn render(content: &str, max_width: usize) -> Option<String> {
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Fallback {
+    TooWide(usize),
+    Unsupported,
+}
+
+pub(crate) fn render(content: &str, max_width: usize) -> Result<String, Fallback> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
-        return None;
+        return Err(Fallback::Unsupported);
     }
+    let mut narrowest: Option<usize> = None;
+    let mut accept = |rendered: String| -> Option<String> {
+        let width = widest_line(&rendered);
+        if max_width > 0 && width <= max_width {
+            return Some(rendered);
+        }
+        narrowest = Some(narrowest.map_or(width, |n| n.min(width)));
+        None
+    };
+
     if trimmed.starts_with("pie") {
-        return render_pie(trimmed).filter(|rendered| fits_width(rendered, max_width));
+        if let Some(rendered) = render_pie(trimmed).and_then(&mut accept) {
+            return Ok(rendered);
+        }
+        return Err(fallback(narrowest));
     }
 
     let rendered = render_diagram(trimmed, OutputFormat::Text, &RenderConfig::default()).ok();
-    if rendered
-        .as_deref()
-        .is_some_and(|rendered| fits_width(rendered, max_width))
-    {
-        return rendered;
+    let parsed = rendered.is_some();
+    if let Some(rendered) = rendered.and_then(&mut accept) {
+        return Ok(rendered);
     }
 
     if trimmed.starts_with("classDiagram") {
-        rendered.as_ref()?;
+        if !parsed {
+            return Err(Fallback::Unsupported);
+        }
         if !horizontal_class_layout_cannot_fit(trimmed, max_width) {
             if let Some(horizontal) = use_horizontal_class_direction(trimmed) {
-                if let Ok(rendered) =
+                if let Some(rendered) =
                     render_diagram(&horizontal, OutputFormat::Text, &RenderConfig::default())
+                        .ok()
+                        .and_then(&mut accept)
                 {
-                    if fits_width(&rendered, max_width) {
-                        return Some(rendered);
-                    }
+                    return Ok(rendered);
                 }
             }
         }
-        return render_vertical_class_diagram(trimmed, max_width);
+        return match render_vertical_class_diagram(trimmed, max_width) {
+            Ok(rendered) => Ok(rendered),
+            Err(Fallback::TooWide(width)) => {
+                Err(fallback(Some(narrowest.map_or(width, |n| n.min(width)))))
+            }
+            Err(Fallback::Unsupported) => Err(fallback(narrowest)),
+        };
     }
 
-    let vertical = use_vertical_direction(trimmed)?;
-    render_diagram(&vertical, OutputFormat::Text, &RenderConfig::default())
-        .ok()
-        .filter(|rendered| fits_width(rendered, max_width))
+    if let Some(rendered) = use_vertical_direction(trimmed)
+        .and_then(|vertical| {
+            render_diagram(&vertical, OutputFormat::Text, &RenderConfig::default()).ok()
+        })
+        .and_then(&mut accept)
+    {
+        return Ok(rendered);
+    }
+    Err(fallback(narrowest))
 }
 
-fn fits_width(rendered: &str, max_width: usize) -> bool {
-    max_width > 0
-        && rendered
-            .lines()
-            .all(|line| display_width(line) <= max_width)
+fn fallback(narrowest: Option<usize>) -> Fallback {
+    narrowest.map_or(Fallback::Unsupported, Fallback::TooWide)
+}
+
+fn widest_line(rendered: &str) -> usize {
+    rendered.lines().map(display_width).max().unwrap_or(0)
 }
 
 fn use_vertical_direction(content: &str) -> Option<String> {
@@ -160,11 +191,7 @@ struct ClassBlock {
     members: Vec<String>,
 }
 
-fn render_vertical_class_diagram(content: &str, max_width: usize) -> Option<String> {
-    if max_width < 12 {
-        return None;
-    }
-
+fn render_vertical_class_diagram(content: &str, max_width: usize) -> Result<String, Fallback> {
     let mut classes = Vec::new();
     let mut relationships = Vec::new();
     let mut current: Option<ClassBlock> = None;
@@ -207,7 +234,10 @@ fn render_vertical_class_diagram(content: &str, max_width: usize) -> Option<Stri
         classes.push(class);
     }
     if classes.is_empty() {
-        return None;
+        return Err(Fallback::Unsupported);
+    }
+    if max_width < 12 {
+        return Err(Fallback::TooWide(12));
     }
 
     let widest_class_line = classes
@@ -247,7 +277,7 @@ fn render_vertical_class_diagram(content: &str, max_width: usize) -> Option<Stri
         }
     }
 
-    Some(out.trim_end().to_string())
+    Ok(out.trim_end().to_string())
 }
 
 fn looks_like_class_relationship(line: &str) -> bool {
@@ -677,5 +707,13 @@ mod tests {
     fn horizontal_class_layout_cannot_fit_reports_false_when_no_classes() {
         let content = "classDiagram\n";
         assert!(!horizontal_class_layout_cannot_fit(content, 10));
+    }
+
+    #[test]
+    fn vertical_class_layout_minimum_width_is_included_in_fallback() {
+        let content = "classDiagram\n  class Aaaaaaaaaaaaaaaaaaaa\n  class Bbbbbbbbbbbbbbbbbbbb\n";
+
+        assert_eq!(render(content, 11), Err(Fallback::TooWide(12)));
+        assert!(render(content, 12).is_ok());
     }
 }
