@@ -357,6 +357,25 @@ enum SharedOutcome {
     Break,
 }
 
+fn handle_enter_key(app: &mut App, key: &KeyEvent) -> Option<SharedOutcome> {
+    if key.code != KeyCode::Enter {
+        return None;
+    }
+    if app.has_active_search() {
+        app.next_match();
+        return Some(SharedOutcome::Handled);
+    }
+    if !app.scroll_with_enter() {
+        return None;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        app.scroll_up(1);
+    } else {
+        app.scroll_down(1);
+    }
+    Some(SharedOutcome::Handled)
+}
+
 fn handle_shared_keys(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -364,6 +383,9 @@ fn handle_shared_keys(
     ss: &SyntaxSet,
     themes: &ThemeSet,
 ) -> anyhow::Result<SharedOutcome> {
+    if let Some(outcome) = handle_enter_key(app, key) {
+        return Ok(outcome);
+    }
     match key.code {
         KeyCode::Esc => {
             if app.is_diff_preview_visible() {
@@ -380,10 +402,6 @@ fn handle_shared_keys(
                 return Ok(SharedOutcome::Handled);
             }
             Ok(SharedOutcome::NotHandled)
-        }
-        KeyCode::Enter if app.has_active_search() => {
-            app.next_match();
-            Ok(SharedOutcome::Handled)
         }
         KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.queue_fuzzy_file_picker(app.picker_dir());
@@ -596,5 +614,39 @@ fn handle_document_keys(app: &mut App, key: &KeyEvent) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use ratatui::text::Line;
+
+    #[test]
+    fn active_search_takes_priority_over_alt_enter() {
+        let lines = ["zero", "needle", "two", "needle", "four", "five", "six"]
+            .into_iter()
+            .map(Line::from)
+            .collect();
+        let mut app = App::new(
+            lines,
+            Vec::new(),
+            "test".to_string(),
+            false,
+            false,
+            None,
+            None,
+        );
+        app.set_scroll_with_enter(true);
+        app.set_search_query("needle");
+        app.run_search();
+        app.scroll_to(5);
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
+        let outcome = handle_enter_key(&mut app, &key);
+
+        assert!(matches!(outcome, Some(SharedOutcome::Handled)));
+        assert_eq!(app.scroll(), 3);
     }
 }
