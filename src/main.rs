@@ -598,6 +598,7 @@ fn main() -> Result<()> {
         lines,
         toc,
         link_spans,
+        link_urls,
         line_number_map,
         source_line_map,
         code_blocks,
@@ -614,7 +615,7 @@ fn main() -> Result<()> {
             last_file_state,
         },
     );
-    app.set_link_spans(link_spans);
+    app.set_links(link_urls, link_spans);
     app.set_code_blocks(code_blocks);
     app.set_line_maps(line_number_map, source_line_map);
     app.set_mode(app_mode);
