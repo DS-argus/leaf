@@ -53,6 +53,23 @@ impl App {
         self.refresh_static_caches();
     }
 
+    pub(super) fn content_snapshot(&self) -> ParseResult {
+        ParseResult {
+            lines: self.lines.clone(),
+            toc: self.toc.clone(),
+            link_spans: self
+                .link_spans_by_line
+                .values()
+                .flatten()
+                .cloned()
+                .collect(),
+            link_urls: self.link_urls.clone(),
+            line_number_map: self.line_number_map.clone(),
+            source_line_map: self.source_line_map.clone(),
+            code_blocks: self.code_blocks.clone(),
+        }
+    }
+
     pub(crate) fn reload(&mut self, ss: &SyntaxSet, themes: &ThemeSet) -> bool {
         self.reset_numkey_state();
         self.clear_toc_scroll_state();
@@ -139,8 +156,8 @@ impl App {
                     self.file_mode,
                     self.code_line_numbers,
                 );
-                self.invalidate_theme_preview_cache();
-                self.store_current_theme_preview_from(&parsed.lines, &parsed.toc);
+                self.invalidate_theme_previews();
+                self.store_current_theme_preview_from(&parsed);
                 self.replace_content(parsed);
             }
         }
@@ -169,8 +186,8 @@ impl App {
             self.scroll = self.scroll.min(new_total.saturating_sub(vh));
         }
 
-        self.invalidate_theme_preview_cache();
-        self.store_current_theme_preview_from(&parsed.lines, &parsed.toc);
+        self.invalidate_theme_previews();
+        self.store_current_theme_preview_from(&parsed);
         self.replace_content(parsed);
         self.goto_line.target = None;
         self.goto_line.error = false;
