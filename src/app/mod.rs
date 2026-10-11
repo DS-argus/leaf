@@ -158,6 +158,7 @@ pub(crate) struct App {
     pub(crate) toc_active_idx: Option<usize>,
     pub(crate) toc_active_display_idx: Option<usize>,
     pub(crate) hovered_toc_idx: Option<usize>,
+    pub(crate) hovered_diff_tree_idx: Option<usize>,
     toc_scroll_mode: TocScrollMode,
     toc_scroll_hint_dismissed: bool,
     toc_active_pin: Option<usize>,
@@ -214,6 +215,12 @@ pub(crate) struct App {
     mouse_capture: bool,
     pub(super) mode: AppMode,
     pub(super) diff_state: Option<DiffState>,
+    pub(crate) toc_width: crate::picker_width::PickerWidthSpec,
+    pub(crate) toc_dragging: bool,
+    pub(crate) toc_hover_row: Option<u16>,
+    pub(crate) diff_tree_dragging: bool,
+    pub(crate) diff_tree_hover_row: Option<u16>,
+    pub(crate) terminal_width: u16,
 }
 
 impl App {
@@ -312,6 +319,7 @@ impl App {
             toc_active_idx: None,
             toc_active_display_idx: None,
             hovered_toc_idx: None,
+            hovered_diff_tree_idx: None,
             toc_scroll_mode: TocScrollMode::Auto(0),
             toc_scroll_hint_dismissed: false,
             toc_active_pin: None,
@@ -387,6 +395,12 @@ impl App {
             mouse_capture: true,
             mode: AppMode::Document,
             diff_state: None,
+            toc_width: crate::picker_width::DEFAULT_TOC_FILELIST_WIDTH,
+            toc_dragging: false,
+            toc_hover_row: None,
+            diff_tree_dragging: false,
+            diff_tree_hover_row: None,
+            terminal_width: 80,
         };
         app.store_current_theme_preview();
         app.refresh_static_caches();
@@ -433,6 +447,56 @@ impl App {
         self.file_picker_width = value;
     }
 
+    pub(crate) fn set_toc_width(&mut self, value: crate::picker_width::PickerWidthSpec) {
+        self.toc_width = value;
+    }
+
+    fn max_toc_content_width(area_width: u16) -> u16 {
+        (area_width / 2).saturating_sub(1)
+    }
+
+    fn toc_content_width(&self, area_width: u16) -> u16 {
+        let raw = crate::picker_width::picker_width_raw(self.toc_width, area_width);
+        let max_content = Self::max_toc_content_width(area_width);
+        raw.clamp(crate::picker_width::TOC_WIDTH_MIN, max_content)
+    }
+
+    pub(crate) fn toc_width_cells(&self, area_width: u16) -> u16 {
+        self.toc_content_width(area_width) + 1
+    }
+
+    pub(crate) fn grow_toc_width(&mut self) {
+        let area_width = self.terminal_width;
+        let max_content = Self::max_toc_content_width(area_width);
+        let new = (self.toc_content_width(area_width) + 5).min(max_content);
+        self.set_toc_content_width(new);
+    }
+
+    pub(crate) fn shrink_toc_width(&mut self) {
+        let area_width = self.terminal_width;
+        let new = self
+            .toc_content_width(area_width)
+            .saturating_sub(5)
+            .max(crate::picker_width::TOC_WIDTH_MIN);
+        self.set_toc_content_width(new);
+    }
+
+    pub(crate) fn set_toc_width_cells(&mut self, total_cells: u16) {
+        let max_content = Self::max_toc_content_width(self.terminal_width);
+        let content = total_cells.saturating_sub(1);
+        let clamped = content.clamp(crate::picker_width::TOC_WIDTH_MIN, max_content);
+        self.set_toc_content_width(clamped);
+    }
+
+    fn set_toc_content_width(&mut self, width: u16) {
+        self.toc_width = crate::picker_width::PickerWidthSpec::Cells(width);
+        self.invalidate_toc_display();
+    }
+
+    fn invalidate_toc_display(&mut self) {
+        self.toc_display_lines.clear();
+    }
+
     pub(crate) fn set_file_history_length(&mut self, value: Option<i32>) {
         self.file_history_length = value;
     }
@@ -473,7 +537,12 @@ impl App {
         if !self.mouse_capture {
             self.hovered_link = None;
             self.hovered_toc_idx = None;
+            self.hovered_diff_tree_idx = None;
             self.scrollbar_dragging = false;
+            self.toc_dragging = false;
+            self.toc_hover_row = None;
+            self.diff_tree_dragging = false;
+            self.diff_tree_hover_row = None;
         }
         self.mouse_capture
     }
@@ -661,6 +730,7 @@ impl App {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut entries: Vec<usize> = Vec::new();
         let mut active_display_idx = None;
+        let panel_width = self.toc_width_cells(self.terminal_width);
         for (idx, entry, display_level) in self.visible_toc_entries() {
             let is_active = active_idx == Some(idx);
             let line = build_toc_line_with_index(
@@ -668,6 +738,7 @@ impl App {
                 display_level,
                 (display_level == 1).then_some(top_level_index),
                 is_active,
+                panel_width,
             );
             if display_level == 1 {
                 top_level_index += 1;

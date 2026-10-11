@@ -36,6 +36,11 @@ pub(crate) struct LeafConfig {
     )]
     pub(crate) file_picker_width: Option<PickerWidthSpec>,
     #[serde(
+        rename = "toc-filelist-width",
+        deserialize_with = "deserialize_lenient_picker_width"
+    )]
+    pub(crate) toc_filelist_width: Option<PickerWidthSpec>,
+    #[serde(
         rename = "file-history-length",
         deserialize_with = "deserialize_lenient_i32"
     )]

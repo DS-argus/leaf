@@ -152,6 +152,45 @@ fn resolve_file_picker_width_falls_back_when_env_invalid() {
 }
 
 #[test]
+fn parse_toc_filelist_width_deserialize_string_ok() {
+    let toml = r#"toc-filelist-width = "40%""#;
+    let config: LeafConfig = toml::from_str(toml).unwrap();
+    assert_eq!(
+        config.toc_filelist_width,
+        Some(PickerWidthSpec::Percent(40))
+    );
+
+    let toml = r#"toc-filelist-width = "25cells""#;
+    let config: LeafConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.toc_filelist_width, Some(PickerWidthSpec::Cells(25)));
+}
+
+#[test]
+fn resolve_toc_filelist_width_defaults_when_none() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_TOC_FILELIST_WIDTH");
+    let result = crate::resolve_toc_filelist_width(None);
+    assert_eq!(result, crate::picker_width::DEFAULT_TOC_FILELIST_WIDTH);
+}
+
+#[test]
+fn resolve_toc_filelist_width_returns_config_when_valid() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::remove_var("LEAF_TOC_FILELIST_WIDTH");
+    let result = crate::resolve_toc_filelist_width(Some(PickerWidthSpec::Cells(35)));
+    assert_eq!(result, PickerWidthSpec::Cells(35));
+}
+
+#[test]
+fn resolve_toc_filelist_width_env_overrides_config() {
+    let _guard = crate::tests::THEME_TEST_MUTEX.lock().unwrap();
+    std::env::set_var("LEAF_TOC_FILELIST_WIDTH", "50cells");
+    let result = crate::resolve_toc_filelist_width(Some(PickerWidthSpec::Cells(30)));
+    std::env::remove_var("LEAF_TOC_FILELIST_WIDTH");
+    assert_eq!(result, PickerWidthSpec::Cells(50));
+}
+
+#[test]
 fn picker_width_cells_percent_ceils_correctly() {
     assert_eq!(effective_cells(PickerWidthSpec::Percent(80), 101), 81);
     assert_eq!(effective_cells(PickerWidthSpec::Percent(50), 201), 101);

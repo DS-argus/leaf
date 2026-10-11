@@ -59,11 +59,21 @@ fn toggle_mouse_capture_off_resets_hover_and_drag_state() {
     let mut app = App::new(lines, toc, "test".to_string(), false, false, None, None);
     app.hovered_link = Some((3, 0));
     app.hovered_toc_idx = Some(2);
+    app.hovered_diff_tree_idx = Some(1);
     app.scrollbar_dragging = true;
+    app.toc_dragging = true;
+    app.toc_hover_row = Some(4);
+    app.diff_tree_dragging = true;
+    app.diff_tree_hover_row = Some(5);
     app.toggle_mouse_capture();
     assert_eq!(app.hovered_link, None);
     assert_eq!(app.hovered_toc_idx, None);
+    assert_eq!(app.hovered_diff_tree_idx, None);
     assert!(!app.scrollbar_dragging);
+    assert!(!app.toc_dragging);
+    assert_eq!(app.toc_hover_row, None);
+    assert!(!app.diff_tree_dragging);
+    assert_eq!(app.diff_tree_hover_row, None);
 }
 
 #[test]

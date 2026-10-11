@@ -214,6 +214,10 @@ impl App {
         self.is_toc_visible() && self.has_toc()
     }
 
+    pub(crate) fn can_resize_side_panel(&self) -> bool {
+        self.is_toc_visible() || self.diff_tree_list_area.is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn toc_scroll_mode(&self) -> TocScrollMode {
         self.toc_scroll_mode

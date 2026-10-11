@@ -5,6 +5,8 @@ pub(crate) enum PickerWidthSpec {
 }
 
 pub(crate) const DEFAULT_PICKER_WIDTH: PickerWidthSpec = PickerWidthSpec::Cells(78);
+pub(crate) const DEFAULT_TOC_FILELIST_WIDTH: PickerWidthSpec = PickerWidthSpec::Cells(30);
+pub(crate) const TOC_WIDTH_MIN: u16 = 20;
 pub(crate) const PICKER_WIDTH_FLOOR_CELLS: u16 = 78;
 pub(crate) const PICKER_WIDTH_FLOOR_WARNING: &str =
     "Configured file picker width below minimum, floor applied";

@@ -13,8 +13,6 @@ const DIFF_TREE_HEADER_BORDER: border::Set = border::Set {
     ..border::PLAIN
 };
 
-pub(crate) const DIFF_TREE_WIDTH: u16 = 30;
-
 pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let theme = app_theme();
 
@@ -28,6 +26,13 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     app.ensure_diff_tree_cursor_visible();
 
+    let is_border_hovered = app.diff_tree_dragging || app.diff_tree_hover_row.is_some();
+    let border_color = if is_border_hovered {
+        theme.ui.toc_accent
+    } else {
+        theme.ui.toc_border
+    };
+
     f.render_widget(
         Paragraph::new("")
             .style(Style::default().bg(theme.ui.toc_bg))
@@ -35,7 +40,7 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 Block::default()
                     .borders(Borders::RIGHT | Borders::BOTTOM)
                     .border_set(DIFF_TREE_HEADER_BORDER)
-                    .border_style(Style::default().fg(theme.ui.toc_border))
+                    .border_style(Style::default().fg(border_color))
                     .style(Style::default().bg(theme.ui.toc_bg)),
             ),
         header_area,
@@ -86,7 +91,15 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let inner_width = list_area.width.saturating_sub(1) as usize;
         for (idx, path, tag) in &rows {
             let is_active = *idx == active_idx;
-            lines.push(build_tree_line(path, is_active, *tag, inner_width, &theme));
+            let is_hovered = app.hovered_diff_tree_idx == Some(*idx) && !is_active;
+            lines.push(build_tree_line(
+                path,
+                is_active,
+                is_hovered,
+                *tag,
+                inner_width,
+                &theme,
+            ));
         }
     }
 
@@ -103,16 +116,31 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::RIGHT)
-                    .border_style(Style::default().fg(theme.ui.toc_border))
+                    .border_style(Style::default().fg(border_color))
                     .style(Style::default().bg(theme.ui.toc_bg)),
             ),
         list_area,
     );
+
+    if let Some(row) = app.diff_tree_hover_row {
+        if row >= header_area.y && row < list_area.y + list_area.height {
+            f.render_widget(
+                Paragraph::new("∙").style(Style::default().fg(border_color)),
+                Rect {
+                    x: list_area.x + list_area.width - 1,
+                    y: row,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+    }
 }
 
 fn build_tree_line(
     path: &str,
     active: bool,
+    hovered: bool,
     tag: (char, ratatui::style::Color),
     inner_width: usize,
     theme: &crate::theme::AppTheme,
@@ -139,19 +167,34 @@ fn build_tree_line(
         None => (String::new(), display_path.clone()),
     };
 
-    let dir_style = Style::default().fg(theme.ui.toc_border).bg(row_bg);
+    let hover_fg = theme.ui.toc_hover_fg;
+    let dir_style = Style::default()
+        .fg(if hovered {
+            hover_fg
+        } else {
+            theme.ui.toc_border
+        })
+        .bg(row_bg);
     let filename_style = Style::default()
         .fg(if active {
             theme.ui.toc_primary_active
+        } else if hovered {
+            hover_fg
         } else {
             theme.ui.toc_primary_inactive
         })
         .bg(row_bg)
         .add_modifier(Modifier::BOLD);
-    let marker_style = Style::default().fg(theme.ui.toc_accent).bg(row_bg);
+    let marker_style = Style::default()
+        .fg(if hovered {
+            hover_fg
+        } else {
+            theme.ui.toc_accent
+        })
+        .bg(row_bg);
     let (tag_char, tag_color) = tag;
     let tag_style = Style::default()
-        .fg(tag_color)
+        .fg(if hovered { hover_fg } else { tag_color })
         .bg(row_bg)
         .add_modifier(Modifier::BOLD);
     let spacer_style = Style::default().bg(row_bg);
