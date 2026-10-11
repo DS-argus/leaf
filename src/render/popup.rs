@@ -84,7 +84,7 @@ pub(super) fn render_help_popup(f: &mut Frame, app: &App) {
 
 fn render_help_document(f: &mut Frame, _app: &App) {
     let theme = app_theme();
-    let area = centered_rect(53, 26, f.area());
+    let area = centered_rect(53, 27, f.area());
 
     let select_hint =
         crate::editor::selection_modifier_label(&crate::editor::detect_terminal_emulator());
@@ -148,6 +148,10 @@ fn render_help_document(f: &mut Frame, _app: &App) {
         Line::from(vec![
             Span::styled("J/K, U/D   ", key_style),
             Span::styled("navigate toc", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("</>        ", key_style),
+            Span::styled("resize toc", text_style),
         ]),
         Line::from(""),
         Line::from(vec![

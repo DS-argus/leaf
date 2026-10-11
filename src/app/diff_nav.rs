@@ -14,28 +14,18 @@ impl App {
         Some(state.current_file_idx.min(state.files.len() - 1))
     }
 
-    pub(crate) fn diff_next_file(&mut self) -> bool {
-        let Some(cur) = self.diff_current_file_from_scroll() else {
+    pub(crate) fn diff_nav_to_file(&mut self, idx: usize) -> bool {
+        let Some(state) = self.diff_state.as_mut() else {
             return false;
         };
-        let Some(state) = self.diff_state.as_ref() else {
-            return false;
-        };
-        let total_files = state.files.len();
-        if total_files == 0 {
+        if idx >= state.files.len() {
             return false;
         }
-        let next_file = (cur + 1).min(total_files - 1);
-        if next_file == cur {
-            return false;
-        }
-        let target_line = state.first_scroll_target_of_file(next_file);
-        let s = self.diff_state.as_mut().expect("checked");
-        s.current_file_idx = next_file;
-        s.nav_pinned_file_idx = Some(next_file);
-        s.tree_active_idx = next_file;
-
-        s.tree_scroll_manual = false;
+        let target_line = state.first_scroll_target_of_file(idx);
+        state.current_file_idx = idx;
+        state.nav_pinned_file_idx = Some(idx);
+        state.tree_active_idx = idx;
+        state.tree_scroll_manual = false;
         if let Some(line) = target_line {
             self.scroll = line;
         }
@@ -43,28 +33,21 @@ impl App {
         true
     }
 
-    pub(crate) fn diff_prev_file(&mut self) -> bool {
+    pub(crate) fn diff_next_file(&mut self) -> bool {
         let Some(cur) = self.diff_current_file_from_scroll() else {
             return false;
         };
-        let Some(state) = self.diff_state.as_ref() else {
+        self.diff_nav_to_file(cur + 1)
+    }
+
+    pub(crate) fn diff_prev_file(&mut self) -> bool {
+        let Some(cur) = self.diff_current_file_from_scroll() else {
             return false;
         };
         if cur == 0 {
             return false;
         }
-        let prev_file = cur - 1;
-        let target_line = state.first_scroll_target_of_file(prev_file);
-        let s = self.diff_state.as_mut().expect("checked");
-        s.current_file_idx = prev_file;
-        s.nav_pinned_file_idx = Some(prev_file);
-        s.tree_active_idx = prev_file;
-        s.tree_scroll_manual = false;
-        if let Some(line) = target_line {
-            self.scroll = line;
-        }
-        self.clamp_scroll();
-        true
+        self.diff_nav_to_file(cur - 1)
     }
 
     pub(crate) fn clamp_scroll(&mut self) {

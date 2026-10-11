@@ -22,6 +22,13 @@ pub(super) fn render_toc_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
     app.toc_list_area = Some(toc_chunks[1]);
 
+    let is_border_hovered = app.toc_dragging || app.toc_hover_row.is_some();
+    let border_color = if is_border_hovered {
+        theme.ui.toc_accent
+    } else {
+        theme.ui.toc_border
+    };
+
     f.render_widget(
         Paragraph::new("")
             .style(Style::default().bg(theme.ui.toc_bg))
@@ -29,7 +36,7 @@ pub(super) fn render_toc_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 Block::default()
                     .borders(Borders::RIGHT | Borders::BOTTOM)
                     .border_set(TOC_HEADER_BORDER)
-                    .border_style(Style::default().fg(theme.ui.toc_border))
+                    .border_style(Style::default().fg(border_color))
                     .style(Style::default().bg(theme.ui.toc_bg)),
             ),
         toc_chunks[0],
@@ -57,7 +64,7 @@ pub(super) fn render_toc_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::RIGHT)
-                    .border_style(Style::default().fg(theme.ui.toc_border))
+                    .border_style(Style::default().fg(border_color))
                     .style(Style::default().bg(theme.ui.toc_bg)),
             ),
         toc_chunks[1],
@@ -72,6 +79,22 @@ pub(super) fn render_toc_panel(f: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
     );
+
+    if let Some(row) = app.toc_hover_row {
+        let panel_top = toc_chunks[0].y;
+        let panel_bottom = toc_chunks[1].y + toc_chunks[1].height;
+        if row >= panel_top && row < panel_bottom {
+            f.render_widget(
+                Paragraph::new("∙").style(Style::default().fg(border_color)),
+                Rect {
+                    x: toc_chunks[1].x + toc_chunks[1].width - 1,
+                    y: row,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+    }
 }
 
 fn apply_toc_hover_style(line: &mut Line<'static>, hover_fg: Color) {
@@ -83,7 +106,7 @@ fn apply_toc_hover_style(line: &mut Line<'static>, hover_fg: Color) {
 pub(crate) fn toc_header_line() -> Line<'static> {
     let theme = app_theme();
     Line::from(vec![Span::styled(
-        "  TABLE OF CONTENTS",
+        " TABLE OF CONTENTS",
         Style::default()
             .fg(theme.ui.toc_header_fg)
             .bg(theme.ui.toc_bg)
@@ -96,6 +119,7 @@ pub(crate) fn build_toc_line_with_index(
     display_level: u8,
     top_level_index: Option<usize>,
     active: bool,
+    panel_width: u16,
 ) -> Line<'static> {
     let theme = app_theme();
     let active_bg = theme.ui.toc_active_bg;
@@ -104,16 +128,27 @@ pub(crate) fn build_toc_line_with_index(
     match display_level {
         1 => {
             let index = top_level_index.unwrap_or(0) + 1;
-            let title = crate::markdown::truncate_display_width(&entry.title, 20);
+            let index_str = format!("{index:02}");
+            let title = crate::markdown::truncate_display_width(
+                &entry.title,
+                (panel_width as usize).saturating_sub(7),
+            );
             let bg = if active { active_bg } else { inactive_bg };
+
+            let actual_used =
+                1 + 1 + index_str.len() + 1 + crate::markdown::width::display_width(&title);
+            let inner_width = (panel_width as usize).saturating_sub(1);
+            let pad_cols = inner_width.saturating_sub(actual_used);
+            let pad = " ".repeat(pad_cols);
+
             Line::from(vec![
                 Span::styled(
                     if active { "▎" } else { " " },
                     Style::default().fg(theme.ui.toc_accent).bg(bg),
                 ),
-                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
-                    format!("{index:02}"),
+                    index_str,
                     Style::default()
                         .fg(if active {
                             theme.ui.toc_accent
@@ -135,37 +170,55 @@ pub(crate) fn build_toc_line_with_index(
                         .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(pad, Style::default().bg(bg)),
             ])
         }
-        _ => Line::from(vec![
-            Span::styled(
-                if active { "▎" } else { " " },
-                Style::default().fg(theme.ui.toc_accent),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                "•",
-                Style::default().fg(if active {
-                    theme.ui.toc_accent
-                } else {
-                    theme.ui.toc_secondary_inactive
-                }),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                crate::markdown::truncate_display_width(&entry.title, 18),
-                Style::default()
-                    .fg(if active {
-                        theme.ui.toc_secondary_text_active
-                    } else {
-                        theme.ui.toc_secondary_text_inactive
-                    })
-                    .add_modifier(if active {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            ),
-        ]),
+        _ => {
+            let title = crate::markdown::truncate_display_width(
+                &entry.title,
+                (panel_width as usize).saturating_sub(9),
+            );
+            let bg = if active { active_bg } else { inactive_bg };
+
+            let actual_used = 1 + 4 + 1 + 1 + crate::markdown::width::display_width(&title);
+            let inner_width = (panel_width as usize).saturating_sub(1);
+            let pad_cols = inner_width.saturating_sub(actual_used);
+            let pad = " ".repeat(pad_cols);
+
+            Line::from(vec![
+                Span::styled(
+                    if active { "▎" } else { " " },
+                    Style::default().fg(theme.ui.toc_accent).bg(bg),
+                ),
+                Span::styled("    ", Style::default().bg(bg)),
+                Span::styled(
+                    "•",
+                    Style::default()
+                        .fg(if active {
+                            theme.ui.toc_accent
+                        } else {
+                            theme.ui.toc_secondary_inactive
+                        })
+                        .bg(bg),
+                ),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    title,
+                    Style::default()
+                        .fg(if active {
+                            theme.ui.toc_secondary_text_active
+                        } else {
+                            theme.ui.toc_secondary_text_inactive
+                        })
+                        .bg(bg)
+                        .add_modifier(if active {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+                Span::styled(pad, Style::default().bg(bg)),
+            ])
+        }
     }
 }

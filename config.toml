@@ -77,6 +77,17 @@ watch = false
 # Default: "78cells"
 # file-picker-width = "78cells"
 
+# Width of the TOC and file-list side panels
+# Accepted formats:
+#   "NN%":     percent of terminal width, converted to cells (ceil)
+#   "NNcells": absolute number of terminal cells
+# The final width is capped by (terminal_width / 2) cells.
+#
+# Priority: LEAF_TOC_FILELIST_WIDTH > this setting > default ("30cells")
+# Minimum: 20 cells. Maximum: 50% of terminal width.
+# Default: "30cells"
+# toc-filelist-width = "30cells"
+
 # Show line numbers in the main document by default
 # Can still be toggled interactively with 'l' or 'Shift+L'.
 # Priority: LEAF_MAIN_LINE_NUMBERS > this setting > default (false)

@@ -270,17 +270,18 @@ leaf --config
 This opens the configuration file in your editor. If the file does not exist yet, **leaf** creates it with documented defaults.
 
 ```toml
-theme = "ocean"            # arctic, forest, ocean, solarized-dark, or a custom theme file
-editor = "nano"            # any editor in PATH
-watch = false              # auto-reload when opening a file
-width = 80                 # maximum content width (min: 20, default: terminal width)
-extras = ["txt", "rs"]     # extra file types shown in the picker
-file-picker-width = "75%"  # width of the file picker (fuzzy + file browser)
-main-line-numbers = false  # show line numbers in the main document by default
-code-line-numbers = true   # show line numbers inside fenced code blocks
-tab-title-length = -1      # terminal tab title truncation (min: 20, -1: no truncation)
-file-history-length = 0    # recent file history length (0 disables, max: 50)
-hyper-link-prefix = "#"    # single character before link text ("" for none)
+theme = "ocean"             # arctic, forest, ocean, solarized-dark, or a custom theme file
+editor = "nano"             # any editor in PATH
+watch = false               # auto-reload when opening a file
+width = 80                  # maximum content width (min: 20, default: terminal width)
+extras = ["txt", "rs"]      # extra file types shown in the picker
+file-picker-width = "75%"   # width of the file picker (fuzzy + file browser)
+toc-filelist-width = "25%"  # width of the TOC and file-list side panels
+main-line-numbers = false   # show line numbers in the main document by default
+code-line-numbers = true    # show line numbers inside fenced code blocks
+tab-title-length = -1       # terminal tab title truncation (min: 20, -1: no truncation)
+file-history-length = 0     # recent file history length (0 disables, max: 50)
+hyper-link-prefix = "#"     # single character before link text ("" for none)
 ```
 
 To reset the configuration to defaults:

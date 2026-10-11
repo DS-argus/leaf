@@ -96,6 +96,18 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 app.hovered_toc_idx = None;
                 true
             }
+            MouseEventKind::Down(MouseButton::Left)
+                if is_on_toc_border(app, mouse.column, mouse.row) =>
+            {
+                app.toc_dragging = true;
+                true
+            }
+            MouseEventKind::Down(MouseButton::Left)
+                if is_on_diff_tree_border(app, mouse.column, mouse.row) =>
+            {
+                app.diff_tree_dragging = true;
+                true
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 let now = Instant::now();
                 let is_double_click = app.last_click.is_some_and(|(c, r, t)| {
@@ -105,7 +117,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
 
                 if let Some(area) = app.toc_list_area {
                     let scroll_offset = app.toc_scroll_offset(area.height);
-                    if let Some(display_idx) = toc_display_index_at(
+                    if let Some(display_idx) = side_panel_list_index_at(
                         area,
                         app.toc_display_entries().len(),
                         scroll_offset,
@@ -115,6 +127,11 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         app.scroll_to_toc_display_line(display_idx);
                         return true;
                     }
+                }
+
+                if let Some(file_idx) = diff_tree_file_index_at(app, mouse.column, mouse.row) {
+                    app.diff_nav_to_file(file_idx);
+                    return true;
                 }
 
                 let gutter = app.line_number_gutter_width() as u16;
@@ -201,13 +218,34 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 scrollbar_scroll_to(app, mouse.row);
                 true
             }
+            MouseEventKind::Drag(..) if app.toc_dragging || app.diff_tree_dragging => {
+                let panel_area = if app.toc_dragging {
+                    app.toc_list_area
+                } else {
+                    app.diff_tree_list_area
+                };
+                let left = panel_area.map_or(0, |area| area.x);
+                let new_width = mouse.column.saturating_sub(left) + 1;
+                app.set_toc_width_cells(new_width);
+                if app.toc_dragging {
+                    app.toc_hover_row = Some(mouse.row);
+                } else {
+                    app.diff_tree_hover_row = Some(mouse.row);
+                }
+                true
+            }
             MouseEventKind::Drag(..) if app.scrollbar_dragging => {
                 scrollbar_scroll_to(app, mouse.row);
                 true
             }
             MouseEventKind::Up(..) => {
                 app.scrollbar_dragging = false;
-                false
+                let was_dragging = app.toc_dragging || app.diff_tree_dragging;
+                app.toc_dragging = false;
+                app.toc_hover_row = None;
+                app.diff_tree_dragging = false;
+                app.diff_tree_hover_row = None;
+                was_dragging
             }
             MouseEventKind::Moved if prev_pos != app.mouse_position => {
                 let area = app.content_area;
@@ -224,13 +262,11 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     gutter,
                 );
                 let hover_changed = app.hovered_link != new_hover;
-                if hover_changed {
-                    app.hovered_link = new_hover;
-                }
+                app.hovered_link = new_hover;
 
                 let new_toc_hover = app.toc_list_area.and_then(|area| {
                     let scroll_offset = app.toc_scroll_offset(area.height);
-                    toc_display_index_at(
+                    side_panel_list_index_at(
                         area,
                         app.toc_display_entries().len(),
                         scroll_offset,
@@ -239,11 +275,30 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     )
                 });
                 let toc_hover_changed = app.hovered_toc_idx != new_toc_hover;
-                if toc_hover_changed {
-                    app.hovered_toc_idx = new_toc_hover;
-                }
+                app.hovered_toc_idx = new_toc_hover;
 
-                scrollbar_changed || hover_changed || toc_hover_changed
+                let new_border_hover =
+                    is_on_toc_border(app, mouse.column, mouse.row).then_some(mouse.row);
+                let border_hover_changed = app.toc_hover_row != new_border_hover;
+                app.toc_hover_row = new_border_hover;
+
+                let new_diff_tree_item_hover =
+                    diff_tree_file_index_at(app, mouse.column, mouse.row);
+                let diff_tree_item_hover_changed =
+                    app.hovered_diff_tree_idx != new_diff_tree_item_hover;
+                app.hovered_diff_tree_idx = new_diff_tree_item_hover;
+
+                let new_diff_tree_hover =
+                    is_on_diff_tree_border(app, mouse.column, mouse.row).then_some(mouse.row);
+                let diff_tree_hover_changed = app.diff_tree_hover_row != new_diff_tree_hover;
+                app.diff_tree_hover_row = new_diff_tree_hover;
+
+                scrollbar_changed
+                    || hover_changed
+                    || toc_hover_changed
+                    || border_hover_changed
+                    || diff_tree_item_hover_changed
+                    || diff_tree_hover_changed
             }
             _ => false,
         }
@@ -341,12 +396,36 @@ fn mouse_in_toc_area(app: &App, col: u16, row: u16) -> bool {
         .is_some_and(|area| is_in_rect(area, col, row))
 }
 
+fn is_on_side_panel_border(area: Option<Rect>, content_y: u16, col: u16, row: u16) -> bool {
+    area.is_some_and(|a| {
+        let border_x = a.x + a.width - 1;
+        col >= border_x.saturating_sub(1)
+            && col <= border_x.saturating_add(1)
+            && row >= content_y
+            && row < a.y + a.height
+    })
+}
+
+fn is_on_toc_border(app: &App, col: u16, row: u16) -> bool {
+    is_on_side_panel_border(app.toc_list_area, app.content_area.y, col, row)
+}
+
+fn is_on_diff_tree_border(app: &App, col: u16, row: u16) -> bool {
+    is_on_side_panel_border(app.diff_tree_list_area, app.content_area.y, col, row)
+}
+
 fn mouse_in_diff_tree_area(app: &App, col: u16, row: u16) -> bool {
     app.diff_tree_list_area
         .is_some_and(|area| is_in_rect(area, col, row))
 }
 
-fn toc_display_index_at(
+fn diff_tree_file_index_at(app: &App, col: u16, row: u16) -> Option<usize> {
+    let area = app.diff_tree_list_area?;
+    let state = app.diff()?;
+    side_panel_list_index_at(area, state.files.len(), state.tree_scroll, col, row)
+}
+
+fn side_panel_list_index_at(
     area: Rect,
     entries_len: usize,
     scroll_offset: usize,
@@ -438,4 +517,30 @@ fn strip_unc_prefix(path: std::path::PathBuf) -> std::path::PathBuf {
         }
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_on_side_panel_border, side_panel_list_index_at};
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn side_panel_item_hit_testing_accounts_for_scroll_and_excludes_border() {
+        let area = Rect::new(10, 4, 20, 3);
+        assert_eq!(side_panel_list_index_at(area, 12, 5, 10, 4), Some(5));
+        assert_eq!(side_panel_list_index_at(area, 12, 5, 18, 6), Some(7));
+        assert_eq!(side_panel_list_index_at(area, 12, 5, 29, 4), None);
+        assert_eq!(side_panel_list_index_at(area, 12, 5, 10, 7), None);
+        assert_eq!(side_panel_list_index_at(area, 7, 5, 10, 6), None);
+    }
+
+    #[test]
+    fn side_panel_border_hit_testing_stays_within_the_panel_height() {
+        let area = Some(Rect::new(0, 5, 30, 10));
+        assert!(is_on_side_panel_border(area, 3, 29, 3));
+        assert!(is_on_side_panel_border(area, 5, 29, 5));
+        assert!(is_on_side_panel_border(area, 5, 28, 14));
+        assert!(!is_on_side_panel_border(area, 5, 29, 4));
+        assert!(!is_on_side_panel_border(area, 5, 29, 15));
+    }
 }

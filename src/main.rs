@@ -209,12 +209,34 @@ pub(crate) fn tab_title_n_to_max_filename_len(n: i32) -> Option<usize> {
 pub(crate) fn resolve_file_picker_width(
     config_value: Option<picker_width::PickerWidthSpec>,
 ) -> picker_width::PickerWidthSpec {
-    if let Ok(val) = std::env::var("LEAF_FILE_PICKER_WIDTH") {
+    resolve_picker_width(
+        "LEAF_FILE_PICKER_WIDTH",
+        config_value,
+        picker_width::DEFAULT_PICKER_WIDTH,
+    )
+}
+
+pub(crate) fn resolve_toc_filelist_width(
+    config_value: Option<picker_width::PickerWidthSpec>,
+) -> picker_width::PickerWidthSpec {
+    resolve_picker_width(
+        "LEAF_TOC_FILELIST_WIDTH",
+        config_value,
+        picker_width::DEFAULT_TOC_FILELIST_WIDTH,
+    )
+}
+
+fn resolve_picker_width(
+    env_var: &str,
+    config_value: Option<picker_width::PickerWidthSpec>,
+    default: picker_width::PickerWidthSpec,
+) -> picker_width::PickerWidthSpec {
+    if let Ok(val) = std::env::var(env_var) {
         if let Some(spec) = picker_width::parse_picker_width_spec(&val) {
             return spec;
         }
     }
-    config_value.unwrap_or(picker_width::DEFAULT_PICKER_WIDTH)
+    config_value.unwrap_or(default)
 }
 
 fn append_config_warning(warning: &mut Option<String>, next: Option<String>) {
@@ -344,6 +366,7 @@ fn main() -> Result<()> {
     let tab_title_length = resolve_tab_title_length_n(user_config.tab_title_length);
     let tab_title_max_filename_len = tab_title_length.and_then(tab_title_n_to_max_filename_len);
     let file_picker_width = resolve_file_picker_width(user_config.file_picker_width);
+    let toc_filelist_width = resolve_toc_filelist_width(user_config.toc_filelist_width);
     if let Some(prefix) = &user_config.hyper_link_prefix {
         markdown::set_link_marker(prefix);
     }
@@ -627,6 +650,7 @@ fn main() -> Result<()> {
     app.set_tab_title_max_filename_len(tab_title_max_filename_len);
     app.set_tab_title_length(tab_title_length);
     app.set_file_picker_width(file_picker_width);
+    app.set_toc_width(toc_filelist_width);
     app.set_file_history_length(effective_file_history_length);
     if let Some(was) = history_clamped_from {
         app.set_history_flash(app::HistoryFlash::LengthCapped { was });

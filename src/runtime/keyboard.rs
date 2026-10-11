@@ -493,7 +493,10 @@ fn handle_shared_keys(
             app.begin_goto_line();
             Ok(SharedOutcome::Handled)
         }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
+        KeyCode::Char('l') | KeyCode::Char('L')
+            if !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             app.toggle_line_numbers();
             Ok(SharedOutcome::Handled)
         }
@@ -552,6 +555,26 @@ fn handle_document_keys(app: &mut App, key: &KeyEvent) -> bool {
         }
         KeyCode::Char('t') => {
             app.toggle_toc();
+            true
+        }
+        KeyCode::Char('>') if app.can_resize_side_panel() => {
+            app.grow_toc_width();
+            true
+        }
+        KeyCode::Char('<') if app.can_resize_side_panel() => {
+            app.shrink_toc_width();
+            true
+        }
+        KeyCode::Char('l')
+            if key.modifiers.contains(KeyModifiers::ALT) && app.can_resize_side_panel() =>
+        {
+            app.grow_toc_width();
+            true
+        }
+        KeyCode::Char('h')
+            if key.modifiers.contains(KeyModifiers::ALT) && app.can_resize_side_panel() =>
+        {
+            app.shrink_toc_width();
             true
         }
         KeyCode::Char('n') => {

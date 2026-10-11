@@ -37,6 +37,8 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
+    app.terminal_width = area.width;
+
     let mode = app.mode();
 
     let preview_active = mode == AppMode::Diff && app.is_diff_preview_visible();
@@ -44,17 +46,11 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
         mode == AppMode::Diff && !preview_active && app.diff().is_some_and(|d| d.tree_visible);
     let toc_active = mode == AppMode::Document && app.is_toc_visible() && app.has_toc();
 
-    let (side_area, content_area): (Option<Rect>, Rect) = if toc_active {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(30), Constraint::Min(0)])
-            .split(root[0]);
-        (Some(cols[0]), cols[1])
-    } else if diff_tree_visible {
+    let (side_area, content_area): (Option<Rect>, Rect) = if toc_active || diff_tree_visible {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(diff_tree::DIFF_TREE_WIDTH),
+                Constraint::Length(app.toc_width_cells(app.terminal_width)),
                 Constraint::Min(0),
             ])
             .split(root[0]);
@@ -78,6 +74,7 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
 
     if !diff_tree_visible {
         app.diff_tree_list_area = None;
+        app.hovered_diff_tree_idx = None;
     }
 
     app.content_area = content_area;
