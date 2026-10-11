@@ -12,19 +12,10 @@ pub(super) struct NumkeyCycleState {
 
 impl App {
     pub(crate) fn max_scroll(&self) -> usize {
+        if let Some(longest) = self.diff_preview_longest() {
+            return longest.saturating_sub(self.page_scroll_viewport_height());
+        }
         if let Some(state) = self.diff() {
-            if state.preview_visible && !state.files.is_empty() {
-                let idx = state
-                    .tree_active_idx
-                    .min(state.files.len().saturating_sub(1));
-                if let Some(pair) = state.preview_cache.get(&idx) {
-                    let longest = pair.before_lines.len().max(pair.after_lines.len());
-
-                    let avail = (self.content_area.height as usize).saturating_sub(2);
-                    return longest.saturating_sub(avail);
-                }
-            }
-
             if matches!(state.layout, crate::diff::DiffLayout::Split) {
                 return state
                     .split_lines
@@ -34,6 +25,50 @@ impl App {
         }
         self.total()
             .saturating_sub(self.content_area.height as usize)
+    }
+
+    fn page_scroll_viewport_height(&self) -> usize {
+        let height = self.content_area.height as usize;
+        if self.diff_preview_longest().is_some() {
+            height.saturating_sub(2)
+        } else {
+            height
+        }
+    }
+
+    fn diff_preview_longest(&self) -> Option<usize> {
+        let state = self.diff()?;
+        if !state.preview_visible || state.files.is_empty() {
+            return None;
+        }
+        let idx = state
+            .tree_active_idx
+            .min(state.files.len().saturating_sub(1));
+        let pair = state.preview_cache.get(&idx)?;
+        Some(pair.before_lines.len().max(pair.after_lines.len()))
+    }
+
+    fn page_scroll_amount(&self) -> usize {
+        let viewport = self.page_scroll_viewport_height();
+        match self.page_scroll_size {
+            crate::config::PageScrollSize::Rows(rows) => rows,
+            crate::config::PageScrollSize::Percent(percent) => {
+                let scaled = (viewport as u128) * (percent as u128);
+                let rows = scaled.div_ceil(100);
+                rows.min(usize::MAX as u128) as usize
+            }
+            crate::config::PageScrollSize::KeepRows(rows) => viewport.saturating_sub(rows),
+        }
+    }
+
+    pub(crate) fn scroll_page_down(&mut self) {
+        let amount = self.page_scroll_amount();
+        self.scroll_down(amount);
+    }
+
+    pub(crate) fn scroll_page_up(&mut self) {
+        let amount = self.page_scroll_amount();
+        self.scroll_up(amount);
     }
 
     pub(crate) fn visible_end(&self) -> usize {
@@ -90,7 +125,7 @@ impl App {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
         self.dismiss_diff_tree_hint_if_visible();
-        self.scroll = (self.scroll + n).min(self.max_scroll());
+        self.scroll = self.scroll.saturating_add(n).min(self.max_scroll());
         self.sync_diff_file_from_scroll();
     }
 

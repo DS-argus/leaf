@@ -13,6 +13,27 @@ use crate::theme::{resolve_theme_selection, CustomThemeConfig};
 
 const DEFAULT_CONFIG: &str = include_str!("../config.toml");
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageScrollSize {
+    Rows(usize),
+    Percent(usize),
+    KeepRows(usize),
+}
+
+impl Default for PageScrollSize {
+    fn default() -> Self {
+        Self::Rows(20)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PageScrollSizeSetting {
+    #[default]
+    Unset,
+    Valid(PageScrollSize),
+    Invalid,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub(crate) struct LeafConfig {
@@ -49,12 +70,59 @@ pub(crate) struct LeafConfig {
     pub(crate) hyper_link_prefix: Option<String>,
     #[serde(rename = "scroll-with-enter")]
     pub(crate) scroll_with_enter: Option<bool>,
+    #[serde(
+        rename = "page-scroll-size",
+        deserialize_with = "deserialize_page_scroll_size"
+    )]
+    pub(crate) page_scroll_size: PageScrollSizeSetting,
     pub(crate) themes: BTreeMap<String, CustomThemeConfig>,
     #[serde(skip)]
     pub(crate) config_dir: Option<PathBuf>,
 }
 
+impl LeafConfig {
+    pub(crate) fn resolved_page_scroll_size(&self) -> PageScrollSize {
+        match self.page_scroll_size {
+            PageScrollSizeSetting::Valid(size) => size,
+            PageScrollSizeSetting::Unset | PageScrollSizeSetting::Invalid => {
+                PageScrollSize::default()
+            }
+        }
+    }
+}
+
 pub(crate) const FILE_HISTORY_LENGTH_MAX: i32 = 50;
+
+pub(crate) fn parse_page_scroll_size(value: &str) -> Option<PageScrollSize> {
+    if let Some(percent) = value.strip_suffix('%') {
+        return parse_positive_usize(percent).map(PageScrollSize::Percent);
+    }
+
+    let rows = value.strip_suffix("rows")?;
+    if let Some(keep) = rows.strip_prefix('-') {
+        parse_positive_usize(keep).map(PageScrollSize::KeepRows)
+    } else {
+        parse_positive_usize(rows).map(PageScrollSize::Rows)
+    }
+}
+
+fn parse_positive_usize(value: &str) -> Option<usize> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse::<usize>().ok().filter(|n| *n > 0)
+}
+
+fn deserialize_page_scroll_size<'de, D>(deserializer: D) -> Result<PageScrollSizeSetting, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(match value.as_str().and_then(parse_page_scroll_size) {
+        Some(size) => PageScrollSizeSetting::Valid(size),
+        None => PageScrollSizeSetting::Invalid,
+    })
+}
 
 fn deserialize_lenient_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
 where
@@ -104,6 +172,9 @@ pub(crate) fn load_config(overrides: &CliOverrides) -> (LeafConfig, Option<Strin
     config.config_dir = path.parent().map(Path::to_path_buf);
 
     let mut warnings: Vec<String> = Vec::new();
+    if config.page_scroll_size == PageScrollSizeSetting::Invalid {
+        warnings.push("page-scroll-size is invalid, using default (20rows)".to_string());
+    }
 
     let leaf_theme_overrides = std::env::var("LEAF_THEME").is_ok_and(|s| !s.is_empty());
     if overrides.theme.is_none() && !leaf_theme_overrides {

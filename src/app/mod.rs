@@ -208,6 +208,7 @@ pub(crate) struct App {
     pub(super) file_mode: bool,
     pub(super) code_line_numbers: bool,
     scroll_with_enter: bool,
+    page_scroll_size: crate::config::PageScrollSize,
     max_width: Option<usize>,
     tab_title_max_filename_len: Option<usize>,
     tab_title_length: Option<i32>,
@@ -389,6 +390,7 @@ impl App {
             file_mode: false,
             code_line_numbers: true,
             scroll_with_enter: false,
+            page_scroll_size: crate::config::PageScrollSize::default(),
             max_width: None,
             tab_title_max_filename_len: None,
             tab_title_length: None,
@@ -427,6 +429,10 @@ impl App {
 
     pub(crate) fn set_scroll_with_enter(&mut self, value: bool) {
         self.scroll_with_enter = value;
+    }
+
+    pub(crate) fn set_page_scroll_size(&mut self, value: crate::config::PageScrollSize) {
+        self.page_scroll_size = value;
     }
 
     pub(crate) fn set_max_width(&mut self, max_width: Option<usize>) {

@@ -128,3 +128,12 @@ watch = false
 # and macOS terminals need "Use Option as Meta" enabled for Alt to work.
 # Default: false
 # scroll-with-enter = false
+
+# Scroll distance for u/d and PageUp/PageDown keys
+# Accepted formats:
+#   "NN%":     viewport percentage
+#   "NNrows":  fixed number of rows
+#   "-NNrows": keep NN rows visible as overlap
+# Percentages above 100 are allowed. Invalid values use the default.
+# Default: "20rows"
+# page-scroll-size = "20rows"
