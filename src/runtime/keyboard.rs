@@ -433,11 +433,11 @@ fn handle_shared_keys(
             Ok(SharedOutcome::Handled)
         }
         KeyCode::Char('d') | KeyCode::PageDown => {
-            app.scroll_down(20);
+            app.scroll_page_down();
             Ok(SharedOutcome::Handled)
         }
         KeyCode::Char('u') | KeyCode::PageUp => {
-            app.scroll_up(20);
+            app.scroll_page_up();
             Ok(SharedOutcome::Handled)
         }
         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {

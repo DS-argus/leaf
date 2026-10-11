@@ -660,6 +660,7 @@ fn main() -> Result<()> {
         app::history::set_history_error_sender(history_err_tx);
         app.set_history_error_receiver(history_err_rx);
     }
+    app.set_page_scroll_size(user_config.resolved_page_scroll_size());
     app.set_extras(user_config.extras);
     app.set_file_mode(file_mode);
     app.set_editor_config(Some(resolved_editor));

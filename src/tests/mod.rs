@@ -33,6 +33,7 @@ mod markdown_list_blocks;
 mod markdown_lists;
 mod markdown_rendering;
 mod markdown_tables;
+mod page_scroll;
 mod path_rendering;
 mod picker_width;
 mod render;

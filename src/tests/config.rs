@@ -1,3 +1,4 @@
+use crate::config::{parse_page_scroll_size, PageScrollSize, PageScrollSizeSetting};
 use crate::*;
 
 #[test]
@@ -351,6 +352,67 @@ fn parse_scroll_with_enter_missing_defaults_to_none() {
     let toml = r#"theme = "ocean""#;
     let config: LeafConfig = toml::from_str(toml).unwrap();
     assert_eq!(config.scroll_with_enter, None);
+}
+
+#[test]
+fn parse_page_scroll_size_formats() {
+    assert_eq!(
+        parse_page_scroll_size("20rows"),
+        Some(PageScrollSize::Rows(20))
+    );
+    assert_eq!(
+        parse_page_scroll_size("100%"),
+        Some(PageScrollSize::Percent(100))
+    );
+    assert_eq!(
+        parse_page_scroll_size("150%"),
+        Some(PageScrollSize::Percent(150))
+    );
+    assert_eq!(
+        parse_page_scroll_size("-3rows"),
+        Some(PageScrollSize::KeepRows(3))
+    );
+}
+
+#[test]
+fn parse_page_scroll_size_rejects_invalid_values() {
+    for value in [
+        "",
+        "0rows",
+        "-0rows",
+        "0%",
+        "rows",
+        "3",
+        "3line",
+        "+3rows",
+        " 20rows",
+        "999999999999999999999999999999999999999999999999999999rows",
+    ] {
+        assert_eq!(parse_page_scroll_size(value), None, "{value:?}");
+    }
+}
+
+#[test]
+fn page_scroll_size_config_defaults_and_handles_invalid_types() {
+    let missing: LeafConfig = toml::from_str("").unwrap();
+    assert_eq!(
+        missing.resolved_page_scroll_size(),
+        PageScrollSize::Rows(20)
+    );
+    assert_eq!(missing.page_scroll_size, PageScrollSizeSetting::Unset);
+
+    let valid: LeafConfig = toml::from_str(r#"page-scroll-size = "-3rows""#).unwrap();
+    assert_eq!(
+        valid.page_scroll_size,
+        PageScrollSizeSetting::Valid(PageScrollSize::KeepRows(3))
+    );
+
+    let invalid: LeafConfig = toml::from_str("page-scroll-size = 20").unwrap();
+    assert_eq!(invalid.page_scroll_size, PageScrollSizeSetting::Invalid);
+    assert_eq!(
+        invalid.resolved_page_scroll_size(),
+        PageScrollSize::Rows(20)
+    );
 }
 
 #[test]
