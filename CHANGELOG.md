@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-version -->
 
+## [[1.29.0](https://github.com/RivoLink/leaf/releases/tag/1.29.0)] - 2026-10-11
+
+### Added
+
+- resizable toc file-list ([#324](https://github.com/RivoLink/leaf/pull/324))
+- git diff viewer mode ([#322](https://github.com/RivoLink/leaf/pull/322))
+
+### Changed
+
+- configurable page scroll ([#325](https://github.com/RivoLink/leaf/pull/325))
+- scroll with Enter key ([#316](https://github.com/RivoLink/leaf/pull/316))
+
 ## [[1.28.3](https://github.com/RivoLink/leaf/releases/tag/1.28.3)] - 2026-09-28
 
 ### Fixed
