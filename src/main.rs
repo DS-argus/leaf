@@ -713,7 +713,7 @@ fn main() -> Result<()> {
                 area.width, area.height
             ),
         );
-        runtime::prepare_initial_picker_state(area.width as usize, &mut app, &ss, &ts)?;
+        runtime::prepare_initial_picker_state(area.width, &mut app, &ss, &ts)?;
         runtime::debug_log(debug_input, "initial_draw draw start");
         terminal.draw(|f| render::ui(f, &mut app))?;
         runtime::debug_log(debug_input, "initial_draw draw done");

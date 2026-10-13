@@ -4,11 +4,11 @@ mod keyboard;
 mod mouse;
 
 use crate::{
-    app::{App, FileChange, FLASH_DURATION_MS},
+    app::{App, AppMode, FileChange, FLASH_DURATION_MS},
     render::{ui, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
 };
 use anyhow::Result;
-use crossterm::event::{self, poll, Event, KeyEventKind};
+use crossterm::event::{self, poll, Event, KeyEventKind, MouseEventKind};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
     fs::OpenOptions,
@@ -53,7 +53,7 @@ pub(crate) fn debug_log(enabled: bool, message: &str) {
 }
 
 pub(crate) fn prepare_initial_picker_state(
-    area_width: usize,
+    area_width: u16,
     app: &mut App,
     ss: &SyntaxSet,
     themes: &ThemeSet,
@@ -236,8 +236,19 @@ pub(crate) fn run(
                             ),
                         );
                     }
+                    let toc_dragged =
+                        app.toc_dragging && matches!(mouse.kind, MouseEventKind::Drag(_));
+                    let toc_drag_ended =
+                        app.toc_dragging && matches!(mouse.kind, MouseEventKind::Up(_));
                     if mouse::handle_mouse_event(app, mouse) {
                         needs_redraw = true;
+                    }
+                    if toc_dragged {
+                        sync_render_width(terminal, app, ss, themes)?;
+                    }
+                    if toc_drag_ended {
+                        pending_resize = None;
+                        sync_render_width(terminal, app, ss, themes)?;
                     }
                 }
                 Event::Resize(_, _) => {
@@ -350,30 +361,79 @@ fn sync_render_width(
     themes: &ThemeSet,
 ) -> Result<bool> {
     let area = terminal.size()?;
-    Ok(sync_render_width_for_app(
-        area.width as usize,
-        app,
-        ss,
-        themes,
-    ))
+    Ok(sync_render_width_for_app(area.width, app, ss, themes))
 }
 
 fn sync_render_width_for_app(
-    area_width: usize,
+    area_width: u16,
     app: &mut App,
     ss: &SyntaxSet,
     themes: &ThemeSet,
 ) -> bool {
-    let content_width = if app.is_toc_visible() && app.has_toc() {
-        area_width.saturating_sub(30)
+    let render_width = effective_render_width_for_app(area_width, app);
+    app.sync_render_width(render_width, ss, themes)
+}
+
+fn effective_render_width_for_app(area_width: u16, app: &App) -> usize {
+    let content_width = if app.mode() == AppMode::Document && app.is_toc_visible() && app.has_toc()
+    {
+        usize::from(area_width.saturating_sub(app.toc_width_cells(area_width)))
     } else {
-        area_width
+        usize::from(area_width)
     };
     let gutter = app.line_number_gutter_width();
     let effective_width = content_width
         .saturating_sub(CONTENT_HORIZONTAL_PADDING as usize * 2)
         .saturating_sub(SCROLLBAR_WIDTH as usize)
         .saturating_sub(gutter);
-    let capped_width = effective_width.min(app.max_width().unwrap_or(usize::MAX));
-    app.sync_render_width(capped_width, ss, themes)
+    effective_width.min(app.max_width().unwrap_or(usize::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_render_width_for_app;
+    use crate::{
+        app::{App, AppMode},
+        markdown::toc::TocEntry,
+        picker_width::PickerWidthSpec,
+    };
+
+    fn app_with_toc() -> App {
+        App::new(
+            Vec::new(),
+            vec![TocEntry {
+                level: 1,
+                title: "Heading".to_string(),
+                line: 0,
+            }],
+            "test".to_string(),
+            false,
+            false,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn render_width_uses_effective_toc_width_below_and_above_thirty_cells() {
+        let mut app = app_with_toc();
+        app.toggle_toc();
+
+        app.set_toc_width(PickerWidthSpec::Cells(24));
+        assert_eq!(effective_render_width_for_app(100, &app), 72);
+
+        app.set_toc_width(PickerWidthSpec::Cells(40));
+        assert_eq!(effective_render_width_for_app(100, &app), 56);
+    }
+
+    #[test]
+    fn render_width_does_not_reserve_toc_when_hidden_or_in_diff_mode() {
+        let mut app = app_with_toc();
+        app.set_toc_width(PickerWidthSpec::Cells(40));
+        assert_eq!(effective_render_width_for_app(100, &app), 97);
+
+        app.toggle_toc();
+        app.set_mode(AppMode::Diff);
+        assert_eq!(effective_render_width_for_app(100, &app), 97);
+    }
 }
