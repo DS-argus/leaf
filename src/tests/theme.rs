@@ -278,3 +278,108 @@ heading_1 = "#010203"
     assert_eq!(app_theme().markdown.heading_1, Color::Rgb(1, 2, 3));
     set_theme_selection(original);
 }
+
+#[test]
+fn theme_picker_cached_previews_keep_full_parse_metadata() {
+    let _guard = lock_theme_test_state();
+    let original = current_theme_selection();
+    set_theme_preset(ThemePreset::Forest);
+    let source = "[A](https://a.test)\n\n```rust\nlet x = 1;\n```\n";
+    let (ss, _) = test_assets();
+    let ts = ThemeSet::load_defaults();
+    let mut app = App::new_with_source(
+        Vec::new(),
+        Vec::new(),
+        AppConfig {
+            filename: "stdin".to_string(),
+            source: source.to_string(),
+            debug_input: false,
+            watch: false,
+            filepath: None,
+            last_file_state: None,
+        },
+    );
+    assert!(app.sync_render_width(60, &ss, &ts));
+    let metadata = |app: &App| {
+        (
+            app.code_blocks.len(),
+            app.line_number_total(),
+            app.source_line_at(2),
+            app.link_spans_by_line
+                .get(&0)
+                .and_then(|spans| spans.first())
+                .and_then(|span| app.link_url(span.link_id))
+                .map(str::to_owned),
+        )
+    };
+    let state = |app: &App| (app.visible_lines(0, app.total()).to_vec(), metadata(app));
+    let before = state(&app);
+    let (code_blocks, line_total, source_line, link) = &before.1;
+    assert_eq!(*code_blocks, 1);
+    assert!(*line_total > 0);
+    assert_eq!(*source_line, 3);
+    assert_eq!(link.as_deref(), Some("https://a.test"));
+
+    app.open_theme_picker();
+    app.preview_theme_preset(ThemePreset::OceanDark, &ss, &ts);
+    let ocean = state(&app);
+    assert_ne!(ocean.0, before.0);
+    assert_eq!(ocean.1, before.1);
+
+    app.preview_theme_preset(ThemePreset::Forest, &ss, &ts);
+    assert_eq!(state(&app), before, "cached original preset");
+    app.preview_theme_preset(ThemePreset::OceanDark, &ss, &ts);
+    assert_eq!(state(&app), ocean, "cached previewed preset");
+
+    app.restore_theme_picker_preview(&ss, &ts);
+    assert_eq!(state(&app), before, "escape restore");
+    app.content_area = ratatui::layout::Rect::new(0, 0, 60, 10);
+    app.enter_code_select_mode();
+    assert_eq!(app.highlighted_code_block(), Some(0));
+    set_theme_selection(original);
+}
+
+#[test]
+fn resizing_during_theme_preview_reparses_original_theme_at_new_width() {
+    let _guard = lock_theme_test_state();
+    let original = current_theme_selection();
+    set_theme_preset(ThemePreset::Forest);
+    let source = "This paragraph is intentionally long so its rendered line count changes when the terminal is resized to a much narrower width.\n\n[A](https://a.test)\n\n```rust\nlet value = \"this code line also wraps when the available width is reduced\";\n```\n";
+    let (ss, _) = test_assets();
+    let ts = ThemeSet::load_defaults();
+    let mut app = App::new_with_source(
+        Vec::new(),
+        Vec::new(),
+        AppConfig {
+            filename: "stdin".to_string(),
+            source: source.to_string(),
+            debug_input: false,
+            watch: false,
+            filepath: None,
+            last_file_state: None,
+        },
+    );
+    assert!(app.sync_render_width(60, &ss, &ts));
+    let wide_total = app.total();
+
+    app.open_theme_picker();
+    app.preview_theme_preset(ThemePreset::OceanDark, &ss, &ts);
+    assert!(app.sync_render_width(24, &ss, &ts));
+    let narrow_total = app.total();
+    assert!(
+        narrow_total > wide_total,
+        "fixture must reflow at narrow width"
+    );
+
+    app.restore_theme_picker_preview(&ss, &ts);
+    assert_eq!(app.total(), narrow_total);
+    assert_eq!(app.code_blocks.len(), 1);
+    assert_eq!(
+        app.link_spans_by_line
+            .values()
+            .flatten()
+            .find_map(|span| app.link_url(span.link_id)),
+        Some("https://a.test")
+    );
+    set_theme_selection(original);
+}

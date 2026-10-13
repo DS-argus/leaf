@@ -23,6 +23,7 @@ impl LinkedSpan {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct LinkSpan {
     pub line_idx: usize,
     pub start_col: usize,
