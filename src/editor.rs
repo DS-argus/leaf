@@ -1,10 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const EDITOR_LINE_PLACEHOLDER: &str = "{$line}";
 const EDITOR_PATH_PLACEHOLDER: &str = "{$path}";
 
 const EDITOR_TAB_PREFIX: &str = "leaf editor: ";
+const KITTY_LAUNCH_TIMEOUT: Duration = Duration::from_secs(2);
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 fn escape_applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -307,18 +311,48 @@ fn silence(cmd: &mut Command) {
 }
 
 impl LaunchStrategy {
-    fn run(self) -> bool {
+    fn run(self, timeout: Duration) -> bool {
         match self {
             LaunchStrategy::SpawnAndAssume(mut cmd) => {
                 silence(&mut cmd);
                 cmd.spawn().is_ok()
             }
-            LaunchStrategy::RunAndCheck(mut cmd) => {
-                silence(&mut cmd);
-                cmd.status().map(|s| s.success()).unwrap_or(false)
-            }
+            LaunchStrategy::RunAndCheck(cmd) => run_and_check_with_timeout(cmd, timeout),
         }
     }
+}
+
+fn run_and_check_with_timeout(mut cmd: Command, timeout: Duration) -> bool {
+    silence(&mut cmd);
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let start = Instant::now();
+
+    while let Ok(status) = child.try_wait() {
+        if let Some(status) = status {
+            return status.success();
+        }
+
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        thread::sleep(COMMAND_POLL_INTERVAL.min(remaining));
+    }
+
+    match child.kill() {
+        Ok(()) => match child.wait() {
+            Ok(_) => {}
+            Err(_) => return false,
+        },
+        Err(_) => match child.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return false,
+        },
+    }
+    false
 }
 
 pub(crate) fn format_editor_tab_title(file: &Path, tab_title_length: Option<i32>) -> String {
@@ -422,6 +456,17 @@ pub(crate) enum EditorResult {
     NeedsSameTerminal,
 }
 
+pub(crate) fn result_from_new_tab(
+    strategy: Option<LaunchStrategy>,
+    timeout: Duration,
+) -> EditorResult {
+    if strategy.is_some_and(|strategy| strategy.run(timeout)) {
+        EditorResult::Opened
+    } else {
+        EditorResult::NeedsSameTerminal
+    }
+}
+
 pub(crate) fn open_in_editor(
     editor: &str,
     file: &Path,
@@ -439,14 +484,9 @@ pub(crate) fn open_in_editor(
             cmd.spawn().map_err(|e| format!("{bin}: {e}"))?;
             Ok(EditorResult::Opened)
         }
-        EditorKind::Terminal => {
-            if try_new_tab_command(editor, file, emulator, is_wsl(), tab_title_length)
-                .map(LaunchStrategy::run)
-                .unwrap_or(false)
-            {
-                return Ok(EditorResult::Opened);
-            }
-            Ok(EditorResult::NeedsSameTerminal)
-        }
+        EditorKind::Terminal => Ok(result_from_new_tab(
+            try_new_tab_command(editor, file, emulator, is_wsl(), tab_title_length),
+            KITTY_LAUNCH_TIMEOUT,
+        )),
     }
 }
