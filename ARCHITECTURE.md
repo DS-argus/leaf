@@ -1,163 +1,70 @@
 # Architecture
 
-`leaf` is a terminal Markdown previewer built around a small set of focused modules:
+`leaf` is a single Rust binary with an interactive terminal UI and a non-interactive Markdown renderer (`--inline`). `src/main.rs` wires together input handling, application state, parsing, rendering, and terminal lifecycle.
 
-- `src/main.rs`
-  - entrypoint
-  - loads CLI options
-  - reads the initial document or opens the file picker
-  - initializes terminal + syntax/theme assets
+## Component map
 
-- `src/app/`
-  - `mod.rs`  :  central runtime state: document content, TOC, search, watch, editor config, mode detection (`has_content()`)
-  - `content.rs`  :  document loading, reload, reparse, modification detection
-  - `navigation.rs`  :  scroll, TOC jump, numkey cycle, reverse mode
-  - `goto_line.rs`  :  go-to-line mode (`Ctrl+L`): draft input, target validation, error state, contextual scroll offset
-  - `flash.rs`  :  flash notification state (editor, watch, config, link, reload)
-  - `code_blocks.rs`  :  code block selection, focus cycling, and clipboard copy
-  - `popups.rs`  :  help, path popup, editor picker state and methods
-  - `links.rs`  :  link detection, hover tracking, link span mapping
-  - `file_picker.rs`  :  fuzzy and browser picker state, queue/pending lifecycle
-  - `io_picker.rs`  :  filesystem scanning, async loading via thread + mpsc channel, fuzzy matching
-  - `fuzzy.rs`  :  fuzzy matching algorithm and directory sort helpers
-  - `history.rs`  :  file history persistence (`history.toml`), async record via fs2 lock + atomic write
-  - `history_picker.rs`  :  history picker state and lifecycle (queue/load/close/activate)
-  - `search.rs`  :  search state and match tracking
-  - `theme_picker.rs`  :  theme picker state with preview cache
+- `src/main.rs`: composition root. Parses CLI options, loads configuration and theme assets, resolves input and mode, creates `App`, and starts the terminal runtime.
+- `src/cli.rs`: CLI argument parsing and help/version text, including diff, picker, history, config, completion, update, and inline commands.
+- `src/config.rs` and `src/picker_width.rs`: config-file paths and parsing, defaults, validation, and width specifications. The config directory also owns custom themes and `history.toml`.
+- `src/app/`: interactive state and operations.
+  - `mod.rs` owns the shared `App` state, rendered content, caches, overlays, and optional `DiffState`.
+  - `content.rs` loads and reloads documents, tracks file changes, and reparses content when needed.
+  - `mode.rs` defines document/diff state and detects diff input.
+  - `navigation.rs`, `diff_nav.rs`, and `diff_toggles.rs` handle document and diff navigation, layout, file tree, and preview controls.
+  - `diff_preview.rs` obtains or reconstructs before/after file content for diff previews.
+  - `file_picker.rs`, `fuzzy.rs`, and `io_picker.rs` implement browser/fuzzy picker state, matching, indexing, and asynchronous loading.
+  - `history.rs` and `history_picker.rs` persist, load, and present recent files.
+  - `search.rs`, `goto_line.rs`, `links.rs`, `code_blocks.rs`, `theme_picker.rs`, `popups.rs`, and `flash.rs` hold interaction-specific state and behavior.
+- `src/markdown/`: width-aware Markdown parsing and text layout. `mod.rs` drives `pulldown-cmark`; supporting modules render blocks, inline spans, lists, tables, links, footnotes, frontmatter, LaTeX, Mermaid, and the table of contents. `syntax.rs` and `highlight.rs` integrate Syntect; `width.rs` and `wrapping.rs` handle display width.
+- `src/diff/`: Git diff data types, unified-diff parsing, and the unified/split layout choice.
+- `src/render/`: Ratatui frame composition. `content.rs`, `toc.rs`, `diff_tree.rs`, `status.rs`, `popup.rs`, and `popup_picker.rs` render the main panels and overlays; `diff/` builds and draws unified, split, and preview panels.
+- `src/runtime/`: Crossterm event loop, timers, resize handling, keyboard routing, diff/code-selection key handling, and mouse interactions.
+- `src/theme/`: built-in presets, custom-theme deserialization and resolution, UI/Markdown/diff colors, and the selected Syntect syntax theme.
+- Supporting modules: `editor.rs` launches configured editors; `clipboard.rs` opens links and copies text; `completions.rs` installs shell completions; `inline.rs` serializes rendered lines; `terminal.rs` manages terminal state; `update.rs` downloads and verifies releases.
+- `src/tests/`: in-binary unit and regression tests, organized by subsystem. Shared helpers live in `src/tests/common/`; diff fixtures live in `tests/fixtures/diff/`.
 
-- `src/markdown/`
-  - `mod.rs`  :  core Markdown parsing loop and render preparation
-  - `blocks.rs`  :  block-level rendering (headings, code blocks, blockquotes, rules, LaTeX/Mermaid blocks)
-  - `spans.rs`  :  inline style handling (bold, italic, code, LaTeX, links)
-  - `markers.rs`  :  custom inline markers (`==mark==`): open/close delimiters, themed styles, padding
-  - `lists.rs`  :  list rendering (ordered, unordered, nested)
-  - `highlight.rs`  :  search match highlighting across spans
-  - `syntax.rs`  :  syntect code highlighting and language resolution
-  - `fences.rs`  :  code fence normalization (nested fences, tilde fences)
-  - `links.rs`  :  link span detection and construction
-  - `tables.rs`  :  table construction, event handling, and rendering
-  - `table_layout.rs`  :  table cell sizing, wrapping, and alignment algorithms
-  - `latex.rs`  :  LaTeX-to-Unicode conversion: `unicodeit` + postprocessing for `\frac`, `\sqrt`, `^{}`, `_{}`
-  - `mermaid.rs`  :  Mermaid diagram ASCII rendering
-  - `frontmatter.rs`  :  YAML frontmatter extraction and key-value parsing
-  - `toc.rs`  :  TOC extraction and normalization
-  - `width.rs`  :  width-aware helpers
-  - `wrapping.rs`  :  line wrapping for constrained widths
+## Startup and input flow
 
-- `src/render/`
-  - `mod.rs`  :  TUI layout orchestration with `ratatui`
-  - `content.rs`  :  main content panel rendering
-  - `popup.rs`  :  popup rendering for help, theme picker, path display
-  - `popup_picker.rs`  :  popup rendering for file picker, editor picker, loading/failed states
-  - `status.rs`  :  status bar construction (brand, filename, search, watch, shortcuts, percentage)
-  - `toc.rs`  :  TOC sidebar rendering
+1. `main.rs` parses arguments and handles one-shot actions such as help, version, config operations, history edit/remove/list, shell completion, and update before opening the TUI. The history picker remains an interactive action.
+2. It loads `config.toml` and resolves settings. Theme selection follows `--theme` > `LEAF_THEME` > the config value > the default.
+3. Input comes from a file, stdin, a directory, or a fuzzy query. With an interactive terminal and no file, Leaf opens the fuzzy picker by default; `--picker` opens the browser picker. `--last` uses file history.
+4. Diff mode is forced by `--diff`, inferred from a `.diff`/`.patch` extension, or detected from a Git diff marker on the first nonblank line among the first 16 lines. `--diff` can run `git diff` for the working tree, index, or a revision, with an optional path filter.
+5. Markdown documents are parsed into styled terminal lines. Non-Markdown source files with a recognized syntax are wrapped as fenced code blocks. In diff mode, the diff parser and render builders create the diff view.
+6. `--inline` writes parsed lines to stdout and exits without entering the TUI. Otherwise, `main.rs` configures `App`, queues any initial picker, enters a `TerminalSession`, draws the first frame, and starts `runtime::run`.
 
-- `src/runtime/`
-  - `mod.rs`  :  event loop, polling, timers, resize synchronization
-  - `keyboard.rs`  :  keyboard handling with mode-aware branching (popups, pickers, goto-line, search, normal)
-  - `mouse.rs`  :  mouse handling (scroll, click, double-click, scrollbar drag, link hover)
+## Application state and rendering
 
-- `src/theme/`
-  - `mod.rs`  :  theme types, global state, preset selection API
-  - `presets.rs`  :  built-in theme definitions (Arctic, Forest, OceanDark, SolarizedDark)
-  - `resolution.rs`  :  theme resolution, color parsing, custom theme file loading
-  - `serde.rs`  :  theme deserialization, color visitor, override macros
+`AppMode` has two values: `Document` and `Diff`. Whether content is loaded is tracked separately by `App::has_content()`: before the first file is selected, the picker is the main view. Pickers and popups are independent state overlays, not additional application modes.
 
-- `src/editor.rs`
-  - editor detection, classification (terminal vs GUI), and launch
+The Markdown parser returns a `ParseResult` containing styled `ratatui::Line` values plus the TOC, link spans and URLs, code-block ranges, and rendered/source line maps. `App` stores that result, derives searchable plain-text lines, and tracks scrolling, selection, watch state, and interaction caches.
 
-- `src/cli.rs`
-  - command-line parsing
-  - usage/version text
+`render::ui` lays out the content and status bar. Document mode can show the TOC sidebar; diff mode can show a file tree, unified or split content, or a before/after preview. Popup and picker rendering is layered over the active panel. `runtime::run` dispatches keyboard, mouse, and resize events, polls pending work and timers, and redraws when state changes.
 
-- `src/config.rs`
-  - `config.toml` loading and creation (`--config`, `--config reset`)
-  - `LeafConfig` defaults (theme, editor, watch, width, extras) with CLI overrides
+## Document and diff pipelines
 
-- `src/completions.rs`
-  - shell completion installation (`--auto-complete`)
-  - shell detection and embedded bash/zsh/fish/PowerShell scripts
+### Markdown
 
-- `src/clipboard.rs`
-  - cross-platform URL opening (`open`, `xdg-open`, `cmd start`)
-  - clipboard copy via OSC 52 escape sequence (base64)
+`markdown::parse_markdown_with_width` extracts YAML frontmatter, normalizes code fences, then consumes `pulldown-cmark` events. Block and inline renderers apply the active Markdown theme, wrap content to the effective width, and use Syntect for code highlighting. LaTeX and Mermaid blocks use dedicated renderers. The result includes the metadata needed by navigation, search, links, and code-block selection. Resizing or changing the preview theme reparses document content.
 
-- `src/inline.rs`
-  - non-interactive stdout rendering (`--inline`)
-  - ANSI/plain format resolution and line wrapping
-  - ratatui Style-to-ANSI escape code serialization
+### Git diffs
 
-- `src/terminal.rs`
-  - raw mode / alternate screen lifecycle
-  - terminal restore guarantees
+`diff::parse_unified_diff` converts Git patch text into `DiffFile` values containing file metadata and hunks. `render::diff` builds unified lines and their file/hunk/line-number mappings; split lines are built separately. `DiffState` tracks current file, layout, tree navigation, preview visibility, and per-file preview/scroll caches. Before/after previews use Git objects or the working tree/index when available, with hunk reconstruction as a fallback.
 
-- `src/update.rs`
-  - self-update: asset download, SHA256 verification, and binary replacement
+## Background work and persistence
 
-- `src/tests/`
-  - `app.rs`  :  app state, search, and mode detection tests
-  - `app_code_blocks.rs`  :  code block selection, focus cycling, and copy tests
-  - `file_picker.rs`  :  picker opening, browser mode, queued transitions
-  - `file_fuzzy.rs`  :  fuzzy matching, scoring, filtering, truncation
-  - `markdown_lists.rs`  :  list rendering regression tests
-  - `markdown_list_blocks.rs`  :  list-embedded block rendering tests (code, blockquote)
-  - `markdown_tables.rs`  :  table rendering regression tests
-  - `markdown_blocks.rs`  :  headings, TOC, blockquotes, code blocks, rules
-  - `markdown_embedded.rs`  :  LaTeX and Mermaid rendering tests
-  - `markdown_links.rs`  :  link detection and search highlight tests
-  - `toc.rs`  :  TOC extraction, normalization, active section tracking, and display level tests
-  - `editor.rs`  :  editor detection and classification
-  - `render.rs`  :  table and code block border alignment
-  - `theme.rs`  :  theme picker preview and restore
-  - `config.rs`  :  configuration parsing tests
-  - `completions.rs`  :  auto-complete argument parsing and completion script installation tests
-  - `inline.rs`  :  inline spec parsing, format resolution, and write_lines tests
-  - `update.rs`  :  release asset matching and checksum verification
+- Browser, fuzzy, and history pickers are queued in `App`. The runtime starts worker threads, receives results over `mpsc` channels, and installs successful results after polling. Picker loading has a 500 ms minimum display time; errors are represented as picker state. Cancelling drops the receiver; it does not forcibly stop the worker thread.
+- Diff setup builds unified lines immediately. When multiple CPUs are available, split lines are precomputed on a worker thread and installed when the runtime polls the result. If no split build is pending, toggling to split builds it synchronously.
+- In the UI, history recording/removal runs on worker threads, and the history picker loads entries asynchronously. Writes use an `fs2` lock and a temporary file followed by rename; failures are sent back to the UI.
+- `TerminalSession` owns raw mode, the alternate screen, mouse capture, and synchronized updates. The normal exit path and `Drop` attempt to restore the terminal.
 
-## Execution flow
+## State updates
 
-1. `main.rs` parses CLI options, loads `config.toml`, and handles standalone commands (`--auto-complete`, `--config`, `--update`) before any document is opened.
-2. A document is loaded from:
-   - a file argument, or
-   - `stdin`, or
-   - the file picker if no input is provided interactively.
-3. `markdown/` parses the source into rendered lines + TOC.
-4. If `--inline` is active, `inline.rs` writes lines to stdout and exits.
-5. `App` stores the state and caches.
-6. `runtime.rs` runs the event loop:
-   - processes the pending picker queue and spawns the loading thread
-   - polls picker loading, installing results when ready
-   - handles input events through mode-aware branching
-7. `render/` draws each frame from `App`.
+- Opening or reloading a document replaces the source, reparses it, and refreshes derived lines, TOC, links, code-block metadata, and search data.
+- In document mode, an effective-width change triggers a width-aware reparse. Diff rendering tracks the viewport separately.
+- The theme picker previews built-in presets using cached parse results and can restore the original selection and content.
+- Search state lives in `App`; the current match drives highlighting and scroll position.
 
-## Application modes
+## Tests
 
-- **Initial mode** (`!app.has_content()`): no file loaded, picker is the main view. Quit shortcuts exit the app.
-- **Preview mode** (`app.has_content()`): file loaded via argument, stdin, or picker selection. Quit shortcuts in pickers close the popup and return to the preview.
-
-## Picker lifecycle
-
-1. `queue_fuzzy_file_picker()` / `queue_file_picker()` / `queue_history_picker()` sets `PendingPicker`
-2. Main loop calls `start_pending_picker_loading()`, which spawns the thread and creates an `mpsc::channel`
-3. `poll_picker_loading()` does non-blocking `try_recv()` each tick (50ms), honoring a minimum 500ms loading state for uniform UX
-4. Once the thread completes, the result is installed via `install_loaded_file_picker()` or `install_loaded_history_picker()`
-5. Cancel / close: `cancel_picker_loading()` / `close_history_picker()` resets state to `Idle`, `Receiver` is dropped, thread finishes naturally
-
-## Important state transitions
-
-- document reload / open:
-  - source changes
-  - rendered lines and TOC are rebuilt
-  - caches are refreshed
-
-- resize:
-  - effective render width is recomputed
-  - Markdown is reparsed width-aware
-
-- theme preview:
-  - previewed content is reparsed and cached per preset
-  - `Esc` restores the original theme
-
-- search:
-  - query state lives in `App`
-  - active match drives highlight + scroll position
+Tests are declared from `src/tests/mod.rs` under `#[cfg(test)]` in `src/main.rs`. They cover app state, CLI/config behavior, Markdown parsing, diff parsing/rendering, pickers, themes, terminal output, and updates.
