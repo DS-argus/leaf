@@ -110,6 +110,7 @@ text = [220, 221, 222]
         config.theme.as_deref().unwrap(),
         &config.themes,
         None,
+        None,
     )
     .unwrap();
 
@@ -158,7 +159,7 @@ heading_1 = "#fabd2f"
 
     let themes = std::collections::BTreeMap::new();
     let selection =
-        crate::theme::resolve_theme_selection("gruvbox.toml", &themes, Some(&dir)).unwrap();
+        crate::theme::resolve_theme_selection("gruvbox.toml", &themes, Some(&dir), None).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
     let ThemeSelection::Custom(custom) = selection else {
@@ -179,6 +180,61 @@ heading_1 = "#fabd2f"
         custom.theme.markdown.heading_1,
         ratatui::style::Color::Rgb(250, 189, 47)
     );
+}
+
+#[test]
+fn theme_name_resolves_from_themes_dir() {
+    let dir = super::unique_temp_dir("leaf-themes-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("rose-pine-moon.toml"),
+        "base = \"ocean\"\n\n[ui]\ncontent_bg = \"#232136\"\n",
+    )
+    .unwrap();
+
+    let themes = std::collections::BTreeMap::new();
+    let selection =
+        crate::theme::resolve_theme_selection("rose-pine-moon", &themes, None, Some(&dir));
+    let missing = crate::theme::resolve_theme_selection("rose-pine", &themes, None, Some(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let Ok(ThemeSelection::Custom(custom)) = selection else {
+        panic!("expected rose-pine-moon to resolve from the themes dir");
+    };
+    assert_eq!(custom.name, "rose-pine-moon");
+    assert_eq!(custom.base_preset, ThemePreset::OceanDark);
+    assert_eq!(
+        custom.theme.ui.content_bg,
+        ratatui::style::Color::Rgb(35, 33, 54)
+    );
+    assert_eq!(missing.unwrap_err(), "Unknown theme \"rose-pine\"");
+}
+
+#[test]
+fn themes_dir_does_not_shadow_presets_or_config_themes() {
+    let dir = super::unique_temp_dir("leaf-themes-dir-shadow");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["forest", "midnight"] {
+        std::fs::write(dir.join(format!("{name}.toml")), "base = \"arctic\"\n").unwrap();
+    }
+
+    let mut themes = std::collections::BTreeMap::new();
+    themes.insert(
+        "midnight".to_string(),
+        toml::from_str::<crate::theme::CustomThemeConfig>("base = \"ocean\"").unwrap(),
+    );
+    let preset = crate::theme::resolve_theme_selection("forest", &themes, None, Some(&dir));
+    let custom = crate::theme::resolve_theme_selection("midnight", &themes, None, Some(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    assert!(matches!(
+        preset,
+        Ok(ThemeSelection::Preset(ThemePreset::Forest))
+    ));
+    let Ok(ThemeSelection::Custom(custom)) = custom else {
+        panic!("expected midnight to resolve from [themes.midnight]");
+    };
+    assert_eq!(custom.base_preset, ThemePreset::OceanDark);
 }
 
 #[test]

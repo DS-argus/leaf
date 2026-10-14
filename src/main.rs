@@ -339,20 +339,23 @@ fn main() -> Result<()> {
     };
     let (user_config, mut config_warning) = config::load_config(&overrides);
 
+    let themes_dir = config::themes_dir();
     let theme_selection = if let Some(theme_name) = cli_theme.as_deref() {
-        resolve_theme_selection(theme_name, &user_config.themes, None)
+        resolve_theme_selection(theme_name, &user_config.themes, None, themes_dir.as_deref())
             .map_err(|message| anyhow::anyhow!("{message}"))?
     } else if let Some(theme_name) = std::env::var("LEAF_THEME")
         .ok()
         .filter(|s| !s.is_empty())
         .as_deref()
     {
-        resolve_theme_selection(theme_name, &user_config.themes, None).unwrap_or_default()
+        resolve_theme_selection(theme_name, &user_config.themes, None, themes_dir.as_deref())
+            .unwrap_or_default()
     } else if let Some(theme_name) = user_config.theme.as_deref() {
         resolve_theme_selection(
             theme_name,
             &user_config.themes,
             user_config.config_dir.as_deref(),
+            themes_dir.as_deref(),
         )
         .unwrap_or_default()
     } else {

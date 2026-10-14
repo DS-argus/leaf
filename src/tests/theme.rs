@@ -49,7 +49,7 @@ heading_1 = [1, 2, 3]
     let mut themes = BTreeMap::new();
     themes.insert("midnight".to_string(), custom);
 
-    let selection = resolve_theme_selection("midnight", &themes, None).unwrap();
+    let selection = resolve_theme_selection("midnight", &themes, None, None).unwrap();
     let ThemeSelection::Custom(custom) = selection else {
         panic!("expected custom theme selection");
     };
@@ -73,7 +73,7 @@ fn resolve_theme_selection_rejects_unknown_custom_base() {
     let mut themes = BTreeMap::new();
     themes.insert("broken".to_string(), custom);
 
-    let err = resolve_theme_selection("broken", &themes, None).unwrap_err();
+    let err = resolve_theme_selection("broken", &themes, None, None).unwrap_err();
     assert!(err.contains("Unknown base theme \"missing\""));
 }
 
@@ -82,7 +82,7 @@ fn validate_theme_syntax_warns_for_unknown_syntect_theme() {
     let custom: CustomThemeConfig = toml::from_str(r#"syntax = "missing-syntax-theme""#).unwrap();
     let mut themes = BTreeMap::new();
     themes.insert("custom".to_string(), custom);
-    let selection = resolve_theme_selection("custom", &themes, None).unwrap();
+    let selection = resolve_theme_selection("custom", &themes, None, None).unwrap();
     let theme_set = ThemeSet::load_defaults();
 
     let warning = validate_theme_syntax(&selection, &theme_set).unwrap();
@@ -101,7 +101,7 @@ text = "#010203"
     .unwrap();
     let mut themes = BTreeMap::new();
     themes.insert("custom".to_string(), custom);
-    let selection = resolve_theme_selection("custom", &themes, None).unwrap();
+    let selection = resolve_theme_selection("custom", &themes, None, None).unwrap();
 
     set_theme_selection(selection);
 
@@ -134,7 +134,7 @@ frame_fg = "#010203"
     .unwrap();
     let mut themes = BTreeMap::new();
     themes.insert("custom".to_string(), custom);
-    let selection = resolve_theme_selection("custom", &themes, None).unwrap();
+    let selection = resolve_theme_selection("custom", &themes, None, None).unwrap();
     let ThemeSelection::Custom(custom) = selection else {
         panic!("expected custom theme selection");
     };
@@ -244,7 +244,7 @@ heading_1 = "#010203"
     .unwrap();
     let mut themes = BTreeMap::new();
     themes.insert("custom".to_string(), custom);
-    let custom_selection = resolve_theme_selection("custom", &themes, None).unwrap();
+    let custom_selection = resolve_theme_selection("custom", &themes, None, None).unwrap();
     set_theme_selection(custom_selection.clone());
 
     let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();

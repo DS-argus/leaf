@@ -367,6 +367,14 @@ heading_1 = "#fabd2f"
 
 See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available color keys, or explore community themes like [Rosé Pine](https://github.com/rose-pine/leaf).
 
+Theme files in the `themes` folder of the config directory can be selected by name, from anywhere:
+
+```bash
+# ~/.config/leaf/themes/rose-pine-moon.toml
+LEAF_THEME=rose-pine-moon leaf
+leaf --theme rose-pine-moon
+```
+
 ## Keybindings
 
 | Key | Action | Key | Action |

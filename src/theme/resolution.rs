@@ -66,6 +66,7 @@ pub(crate) fn resolve_theme_selection(
     name: &str,
     custom_themes: &BTreeMap<String, CustomThemeConfig>,
     theme_file_base_dir: Option<&Path>,
+    themes_dir: Option<&Path>,
 ) -> Result<ThemeSelection, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -82,6 +83,13 @@ pub(crate) fn resolve_theme_selection(
 
     if looks_like_theme_file(name) {
         return resolve_theme_file_selection(name, theme_file_base_dir);
+    }
+
+    if let Some(path) = themes_dir
+        .map(|dir| dir.join(format!("{name}.toml")))
+        .filter(|path| path.is_file())
+    {
+        return load_theme_file(&path, name);
     }
 
     Err(format!("Unknown theme \"{name}\""))
@@ -124,8 +132,11 @@ pub(super) fn resolve_theme_file_selection(
     name: &str,
     theme_file_base_dir: Option<&Path>,
 ) -> Result<ThemeSelection, String> {
-    let path = resolve_theme_file_path(name, theme_file_base_dir);
-    let content = std::fs::read_to_string(&path)
+    load_theme_file(&resolve_theme_file_path(name, theme_file_base_dir), name)
+}
+
+fn load_theme_file(path: &Path, name: &str) -> Result<ThemeSelection, String> {
+    let content = std::fs::read_to_string(path)
         .map_err(|err| format!("Cannot read theme file \"{}\": {err}", path.display()))?;
     let custom_config = toml::from_str::<CustomThemeConfig>(&content)
         .map_err(|err| format!("Could not parse theme file \"{}\": {err}", path.display()))?;
