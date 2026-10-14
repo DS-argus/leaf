@@ -14,6 +14,8 @@
 # Built-in themes: arctic, forest, ocean, solarized-dark
 # Or set this to a custom theme file path.
 # Relative paths are resolved from this config file's directory.
+# Or set this to the name of a file in the themes folder next to this file,
+# e.g. "rose-pine-moon" for themes/rose-pine-moon.toml.
 # Priority: --theme flag > LEAF_THEME > this setting > ocean
 # Default: ocean
 theme = "ocean"

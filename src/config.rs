@@ -179,9 +179,12 @@ pub(crate) fn load_config(overrides: &CliOverrides) -> (LeafConfig, Option<Strin
     let leaf_theme_overrides = std::env::var("LEAF_THEME").is_ok_and(|s| !s.is_empty());
     if overrides.theme.is_none() && !leaf_theme_overrides {
         if let Some(ref name) = config.theme {
-            if let Err(message) =
-                resolve_theme_selection(name, &config.themes, config.config_dir.as_deref())
-            {
+            if let Err(message) = resolve_theme_selection(
+                name,
+                &config.themes,
+                config.config_dir.as_deref(),
+                themes_dir().as_deref(),
+            ) {
                 warnings.push(format!("{message} in config, using default"));
             }
         }
@@ -241,6 +244,10 @@ pub(crate) fn config_path() -> Option<PathBuf> {
             .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.config")))?;
         Some(PathBuf::from(base).join("leaf").join("config.toml"))
     }
+}
+
+pub(crate) fn themes_dir() -> Option<PathBuf> {
+    config_path().and_then(|p| p.parent().map(|d| d.join("themes")))
 }
 
 pub(crate) fn history_path() -> Option<PathBuf> {
