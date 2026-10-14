@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-version -->
 
+## [[1.29.1](https://github.com/RivoLink/leaf/releases/tag/1.29.1)] - 2026-10-14
+
+### Docs
+
+- sync readme architecture ([#336](https://github.com/RivoLink/leaf/pull/336))
+- mention community themes ([#312](https://github.com/RivoLink/leaf/pull/312))
+
+### Fixed
+
+- mermaid width feedback ([#313](https://github.com/RivoLink/leaf/pull/313))
+- cargo audit rustls error ([#334](https://github.com/RivoLink/leaf/pull/334))
+- theme preview restore ([#320](https://github.com/RivoLink/leaf/pull/320))
+- map links by ownership ([#321](https://github.com/RivoLink/leaf/pull/321))
+- kitty new-tab socket ([#311](https://github.com/RivoLink/leaf/pull/311))
+- sync toc render width ([#328](https://github.com/RivoLink/leaf/pull/328))
+- cargo audit quinn-proto ([#327](https://github.com/RivoLink/leaf/pull/327))
+
+### Changed
+
+- page jumps in pickers ([#318](https://github.com/RivoLink/leaf/pull/318))
+- themes from config dir ([#335](https://github.com/RivoLink/leaf/pull/335))
+- space-key page down ([#330](https://github.com/RivoLink/leaf/pull/330))
+
 ## [[1.29.0](https://github.com/RivoLink/leaf/releases/tag/1.29.0)] - 2026-10-11
 
 ### Added
