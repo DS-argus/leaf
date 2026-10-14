@@ -346,10 +346,11 @@ find . -name '*.rs' | fzf --preview 'leaf --inline ansi {}'
 Create a `.toml` file that inherits from a built-in theme and overrides specific colors:
 
 ```toml
+# config.toml
 theme = "/path/to/custom-theme.toml"
 ```
 
-Relative paths are resolved from the config file directory.
+See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available color keys.
 
 ```toml
 # custom-theme.toml
@@ -365,14 +366,14 @@ text = "#ebdbb2"
 heading_1 = "#fabd2f"
 ```
 
-See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available color keys, or explore community themes like [Rosé Pine](https://github.com/rose-pine/leaf).
-
-Theme files in the `themes` folder of the config directory can be selected by name, from anywhere:
+Theme files in the config directory can be selected by name from anywhere, for example, [Rosé Pine](https://github.com/rose-pine/leaf).
 
 ```bash
-# ~/.config/leaf/themes/rose-pine-moon.toml
-LEAF_THEME=rose-pine-moon leaf
-leaf --theme rose-pine-moon
+# Save the Rosé Pine theme in the themes directory
+nano ~/.config/leaf/themes/rose-pine.toml
+
+# Use the Rosé Pine theme
+leaf --theme rose-pine README.md
 ```
 
 ## Keybindings
