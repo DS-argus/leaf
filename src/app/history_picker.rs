@@ -121,6 +121,18 @@ impl App {
         self.history_picker.index = (self.history_picker.index + 1) % total;
     }
 
+    pub(crate) fn move_history_picker_page_up(&mut self) {
+        self.history_picker.activation_error = None;
+        let total = self.history_picker.filtered.len();
+        super::move_picker_index_page_up(&mut self.history_picker.index, total);
+    }
+
+    pub(crate) fn move_history_picker_page_down(&mut self) {
+        self.history_picker.activation_error = None;
+        let total = self.history_picker.filtered.len();
+        super::move_picker_index_page_down(&mut self.history_picker.index, total);
+    }
+
     pub(crate) fn push_history_picker_query(&mut self, ch: char) {
         self.history_picker.activation_error = None;
         self.history_picker.query.push(ch);

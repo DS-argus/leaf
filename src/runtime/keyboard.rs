@@ -12,6 +12,84 @@ pub(super) enum HandleResult {
     Break,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickerPageMode {
+    Browser,
+    Filtered,
+}
+
+fn picker_page_direction(key: KeyEvent, mode: PickerPageMode) -> Option<PageDirection> {
+    let control = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::PageDown => Some(PageDirection::Down),
+        KeyCode::PageUp => Some(PageDirection::Up),
+        KeyCode::Char('d') if mode == PickerPageMode::Browser && !control => {
+            Some(PageDirection::Down)
+        }
+        KeyCode::Char('u') if mode == PickerPageMode::Browser && !control => {
+            Some(PageDirection::Up)
+        }
+        KeyCode::Char('d') if mode == PickerPageMode::Filtered && control => {
+            Some(PageDirection::Down)
+        }
+        KeyCode::Char('u') if mode == PickerPageMode::Filtered && control => {
+            Some(PageDirection::Up)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod picker_page_key_tests {
+    use super::{
+        picker_page_direction,
+        PageDirection::{Down, Up},
+        PickerPageMode::{Browser, Filtered},
+    };
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn letter_shortcuts_follow_picker_mode() {
+        let control = KeyModifiers::CONTROL;
+        let no_modifiers = KeyModifiers::NONE;
+        let cases = [
+            (Filtered, 'd', control, Some(Down)),
+            (Filtered, 'u', control, Some(Up)),
+            (Filtered, 'd', no_modifiers, None),
+            (Filtered, 'u', no_modifiers, None),
+            (Browser, 'd', no_modifiers, Some(Down)),
+            (Browser, 'u', no_modifiers, Some(Up)),
+            (Browser, 'd', control, None),
+            (Browser, 'u', control, None),
+        ];
+
+        for (mode, character, modifiers, expected) in cases {
+            assert_eq!(
+                picker_page_direction(KeyEvent::new(KeyCode::Char(character), modifiers), mode),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn page_keys_work_in_both_picker_modes() {
+        for mode in [Browser, Filtered] {
+            for (code, expected) in [(KeyCode::PageDown, Down), (KeyCode::PageUp, Up)] {
+                assert_eq!(
+                    picker_page_direction(KeyEvent::new(code, KeyModifiers::NONE), mode),
+                    Some(expected)
+                );
+            }
+        }
+    }
+}
+
 pub(super) fn handle_key_event(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -108,6 +186,7 @@ pub(super) fn handle_key_event(
         }
     } else if app.is_history_picker_open() {
         let has_content = app.has_content();
+        let page_direction = picker_page_direction(key, PickerPageMode::Filtered);
         match key.code {
             KeyCode::Enter => {
                 app.activate_history_picker_selection(ss, themes);
@@ -144,6 +223,8 @@ pub(super) fn handle_key_event(
             KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.move_history_picker_up()
             }
+            _ if page_direction == Some(PageDirection::Down) => app.move_history_picker_page_down(),
+            _ if page_direction == Some(PageDirection::Up) => app.move_history_picker_page_up(),
             KeyCode::Backspace => app.pop_history_picker_query(),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.push_history_picker_query(c);
@@ -152,6 +233,12 @@ pub(super) fn handle_key_event(
         }
     } else if app.is_file_picker_open() {
         let has_content = app.has_content();
+        let page_mode = if app.is_browser_file_picker() {
+            PickerPageMode::Browser
+        } else {
+            PickerPageMode::Filtered
+        };
+        let page_direction = picker_page_direction(key, page_mode);
         match key.code {
             KeyCode::Char('?') => app.open_help(),
             KeyCode::Enter => {
@@ -182,6 +269,8 @@ pub(super) fn handle_key_event(
             }
             KeyCode::Down if app.is_fuzzy_file_picker() => app.move_file_picker_down(),
             KeyCode::Up if app.is_fuzzy_file_picker() => app.move_file_picker_up(),
+            _ if page_direction == Some(PageDirection::Down) => app.move_file_picker_page_down(),
+            _ if page_direction == Some(PageDirection::Up) => app.move_file_picker_page_up(),
             KeyCode::Esc => {
                 if app.is_fuzzy_file_picker() && !app.file_picker_query().is_empty() {
                     app.clear_file_picker_query();

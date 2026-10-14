@@ -20,6 +20,20 @@ pub(crate) fn path_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+const PICKER_PAGE_STEP: usize = 5;
+
+fn move_picker_index_page_up(index: &mut usize, total: usize) {
+    if total > 0 {
+        *index = (*index).saturating_sub(PICKER_PAGE_STEP);
+    }
+}
+
+fn move_picker_index_page_down(index: &mut usize, total: usize) {
+    if total > 0 {
+        *index = (*index + PICKER_PAGE_STEP).min(total - 1);
+    }
+}
+
 mod search;
 pub(crate) use search::SearchState;
 

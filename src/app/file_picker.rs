@@ -474,6 +474,16 @@ impl App {
         self.file_picker.index = (self.file_picker.index + 1) % total;
     }
 
+    pub(crate) fn move_file_picker_page_up(&mut self) {
+        let total = self.file_picker.filtered.len();
+        super::move_picker_index_page_up(&mut self.file_picker.index, total);
+    }
+
+    pub(crate) fn move_file_picker_page_down(&mut self) {
+        let total = self.file_picker.filtered.len();
+        super::move_picker_index_page_down(&mut self.file_picker.index, total);
+    }
+
     pub(crate) fn push_file_picker_query(&mut self, ch: char) {
         if self.is_browser_file_picker() {
             return;
