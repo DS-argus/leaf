@@ -350,7 +350,7 @@ fn sync_render_width(
     Ok(sync_render_width_for_app(area.width, app, ss, themes))
 }
 
-fn sync_render_width_for_app(
+pub(crate) fn sync_render_width_for_app(
     area_width: u16,
     app: &mut App,
     ss: &SyntaxSet,

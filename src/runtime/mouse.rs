@@ -2,8 +2,7 @@ use crate::{
     app::{App, EditorFlash, LinkFlash, PathKind},
     clipboard::{copy_to_clipboard, open_url},
     editor::{self, classify, open_in_editor, split_editor_cmd, EditorResult},
-    markdown::display_width,
-    render::{CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
+    render::{inner_content_area, SCROLLBAR_WIDTH},
     terminal::TerminalSession,
 };
 use anyhow::Result;
@@ -134,14 +133,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     return true;
                 }
 
-                let gutter = app.line_number_gutter_width() as u16;
-                let link_hit = app.link_at_position(
-                    mouse.column,
-                    mouse.row,
-                    CONTENT_HORIZONTAL_PADDING,
-                    SCROLLBAR_WIDTH,
-                    gutter,
-                );
+                let link_hit = app.link_at_position(mouse.column, mouse.row);
                 if app.debug_input_enabled() {
                     super::debug_log(
                         true,
@@ -191,10 +183,11 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     scrollbar_scroll_to(app, mouse.row);
                     true
                 } else if is_double_click {
-                    let inner_x = content_inner_x(app.content_area, gutter);
+                    let gutter = app.line_number_gutter_width() as u16;
+                    let inner_x = inner_content_area(app.content_area).x + gutter;
                     let block_hit = if mouse.column >= inner_x {
                         let inner_col = mouse.column - inner_x;
-                        line_idx_at(app, mouse.column, mouse.row)
+                        app.line_idx_at(mouse.column, mouse.row)
                             .and_then(|line_idx| app.code_block_at(line_idx, inner_col))
                     } else {
                         None
@@ -253,14 +246,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 let scrollbar_changed = is_on_scrollbar(area, prev_col, prev_row)
                     || is_on_scrollbar(area, mouse.column, mouse.row);
 
-                let gutter = app.line_number_gutter_width() as u16;
-                let new_hover = app.find_hovered_link(
-                    mouse.column,
-                    mouse.row,
-                    CONTENT_HORIZONTAL_PADDING,
-                    SCROLLBAR_WIDTH,
-                    gutter,
-                );
+                let new_hover = app.find_hovered_link(mouse.column, mouse.row);
                 let hover_changed = app.hovered_link != new_hover;
                 app.hovered_link = new_hover;
 
@@ -464,49 +450,6 @@ pub(super) fn scrollbar_scroll_to(app: &mut App, row: u16) {
 
 fn is_in_rect(rect: Rect, col: u16, row: u16) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
-}
-
-fn content_inner_x(area: Rect, gutter: u16) -> u16 {
-    area.x + CONTENT_HORIZONTAL_PADDING + gutter
-}
-
-fn line_idx_at(app: &App, col: u16, row: u16) -> Option<usize> {
-    let area = app.content_area;
-    let gutter = app.line_number_gutter_width() as u16;
-    let inner_x = content_inner_x(area, gutter);
-    let inner_w = area
-        .width
-        .saturating_sub(CONTENT_HORIZONTAL_PADDING * 2)
-        .saturating_sub(SCROLLBAR_WIDTH)
-        .saturating_sub(gutter);
-    if col < inner_x || col >= inner_x + inner_w || row < area.y || row >= area.y + area.height {
-        return None;
-    }
-    let rel_row = (row - area.y) as usize;
-    let content_width = inner_w.max(1) as usize;
-    let mut visual_row = 0usize;
-    let total = app.lines.len();
-    for line_idx in app.scroll..total {
-        let line = &app.lines[line_idx];
-        let line_width: usize = line
-            .spans
-            .iter()
-            .map(|s| display_width(s.content.as_ref()))
-            .sum();
-        let wrapped_lines = if line_width == 0 {
-            1
-        } else {
-            line_width.div_ceil(content_width)
-        };
-        if rel_row < visual_row + wrapped_lines {
-            return Some(line_idx);
-        }
-        visual_row += wrapped_lines;
-        if visual_row > area.height as usize {
-            break;
-        }
-    }
-    None
 }
 
 fn strip_unc_prefix(path: std::path::PathBuf) -> std::path::PathBuf {

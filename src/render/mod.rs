@@ -3,6 +3,7 @@ mod diff;
 mod diff_tree;
 mod popup;
 mod popup_picker;
+mod screen_geometry;
 mod status;
 mod toc;
 
@@ -24,8 +25,10 @@ use ratatui::{
     Frame,
 };
 
+pub(crate) use content::inner_content_area;
 #[cfg(test)]
 pub(crate) use popup::wrap_path_lines;
+pub(crate) use screen_geometry::{screen_geometry, ScreenGeometry};
 pub(crate) use status::build_status_bar;
 pub(crate) use toc::{build_toc_line_with_index, toc_header_line};
 
