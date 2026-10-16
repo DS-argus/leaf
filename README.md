@@ -212,9 +212,16 @@ leaf --diff staged
 leaf --diff HEAD~2
 leaf --diff main..feature
 
+# Compare two refs
+leaf --diff HEAD~2 HEAD
+
 # Restrict to a path
 leaf --diff -- src/app/
 leaf --diff HEAD~1 src/main.rs
+
+# Open a patch file or piped diff
+leaf changes.patch
+git show HEAD | leaf
 ```
 
 If the diff is empty, `leaf --diff` prints `No changes to display` and exits. Git errors are forwarded to stderr.
@@ -227,7 +234,9 @@ If the diff is empty, `leaf --diff` prints `No changes to display` and exits. Gi
 | `v` | Toggle layout (unified or split) |
 | `t` | Toggle file-tree sidebar |
 | `p` | Toggle file preview (before \| after) |
+| `Enter` | Open the file preview |
 | `Space` | Recenter the view on the current file |
+| `Ctrl+R` | Refresh the diff (re-run `git diff`) |
 | `Shift+J` / `Shift+K` | Scroll the file-tree down / up |
 | `Shift+U` / `Shift+D` | Page the file-tree up / down |
 

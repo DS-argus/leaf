@@ -103,8 +103,6 @@ diff --git a/x b/x
     let files = crate::diff::parse_unified_diff(src);
     let built = crate::render::build_diff_lines(&files, &ss, &theme);
     let mut state = crate::app::DiffState::new(std::sync::Arc::new(files), Default::default());
-    state.hunk_ranges = built.hunk_ranges.clone();
-    state.line_owner = built.line_owner.clone();
     state.line_old_num = built.line_old_num.clone();
     state.line_new_num = built.line_new_num.clone();
     state.file_header_status = built.file_header_status.clone();
@@ -184,8 +182,6 @@ diff --git a/x b/x
     let files = crate::diff::parse_unified_diff(src);
     let built = crate::render::build_diff_lines(&files, &ss, &theme);
     let mut state = crate::app::DiffState::new(std::sync::Arc::new(files), Default::default());
-    state.hunk_ranges = built.hunk_ranges.clone();
-    state.line_owner = built.line_owner.clone();
     state.line_old_num = built.line_old_num.clone();
     state.line_new_num = built.line_new_num.clone();
     state.file_header_status = built.file_header_status.clone();
@@ -242,8 +238,6 @@ diff --git a/x b/x
     let files = crate::diff::parse_unified_diff(src);
     let built = crate::render::build_diff_lines(&files, &ss, &theme);
     let mut state = crate::app::DiffState::new(std::sync::Arc::new(files), Default::default());
-    state.hunk_ranges = built.hunk_ranges.clone();
-    state.line_owner = built.line_owner.clone();
     state.line_old_num = built.line_old_num.clone();
     state.line_new_num = built.line_new_num.clone();
     state.file_header_status = built.file_header_status.clone();

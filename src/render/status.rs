@@ -286,13 +286,15 @@ fn diff_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
     }
     let theme = app_theme();
     let bar_bg = status_bar_bg();
-    let text = match flash {
-        DiffFlash::SplitBuilding => " Building split view, try again later ",
+    let (text, fg) = match flash {
+        DiffFlash::SearchInPreview => (
+            " Search is not available in preview ",
+            theme.ui.status_warning_fg,
+        ),
+        DiffFlash::Refreshed => (" Diff refreshed ", theme.ui.status_success_fg),
+        DiffFlash::RefreshFailed => (" Diff refresh failed ", theme.ui.status_error_fg),
     };
-    Some(vec![Span::styled(
-        text,
-        Style::default().fg(theme.ui.status_warning_fg).bg(bar_bg),
-    )])
+    Some(vec![Span::styled(text, Style::default().fg(fg).bg(bar_bg))])
 }
 
 fn history_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
@@ -503,6 +505,8 @@ pub(crate) fn status_diff_source_section(app: &App, _bar_bg: Color) -> Vec<Span<
         Some(DiffSource::Working) => Span::styled(" diff · working ", style),
         Some(DiffSource::Cached) => Span::styled(" diff · staged ", style),
         Some(DiffSource::Ref(r)) => Span::styled(format!(" diff · {r} "), style),
+        Some(DiffSource::Revs(from, to)) => Span::styled(format!(" diff · {from} {to} "), style),
+        Some(DiffSource::Patch(label)) => Span::styled(format!(" diff · {label} "), style),
         None => Span::styled(" diff ", style),
     };
     vec![label]

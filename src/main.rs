@@ -100,9 +100,17 @@ fn read_stdin_limited<R: Read>(reader: &mut R, max_bytes: usize) -> Result<Strin
     String::from_utf8(buf).context("stdin is not valid UTF-8")
 }
 
-fn run_git_diff_subprocess(spec: &app::DiffSpec, path_restriction: Option<&str>) -> Result<String> {
+fn run_git_diff_subprocess(spec: &app::DiffSpec) -> Result<String> {
     let mut cmd = std::process::Command::new("git");
-    cmd.arg("diff");
+    cmd.args(["-c", "core.quotePath=false", "diff"]).args([
+        "--no-color",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--submodule=short",
+        "--no-relative",
+        "--no-textconv",
+    ]);
     match &spec.source {
         app::DiffSource::Working => {}
         app::DiffSource::Cached => {
@@ -111,9 +119,13 @@ fn run_git_diff_subprocess(spec: &app::DiffSpec, path_restriction: Option<&str>)
         app::DiffSource::Ref(rev) => {
             cmd.arg(rev);
         }
+        app::DiffSource::Revs(from, to) => {
+            cmd.arg(from).arg(to);
+        }
+        app::DiffSource::Patch(_) => bail!("a patch input cannot be re-read with git diff"),
     }
-    if let Some(p) = path_restriction {
-        cmd.arg("--").arg(p);
+    if !spec.paths.is_empty() {
+        cmd.arg("--").args(&spec.paths);
     }
     let output = cmd
         .output()
@@ -129,15 +141,32 @@ fn run_git_diff_subprocess(spec: &app::DiffSpec, path_restriction: Option<&str>)
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn read_text_file_lossy(path: &std::path::Path) -> Result<String> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if app::mode::is_diff_extension(ext) {
-        let bytes =
-            std::fs::read(path).with_context(|| format!("Cannot read: {}", path.display()))?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    } else {
-        std::fs::read_to_string(path).with_context(|| format!("Cannot read: {}", path.display()))
+fn apply_diff_positional(spec: &mut app::DiffSpec, spec_explicit: bool, arg: String) {
+    match &spec.source {
+        app::DiffSource::Ref(from)
+            if spec_explicit && !std::path::Path::new(&arg).exists() && is_git_revision(&arg) =>
+        {
+            spec.source = app::DiffSource::Revs(from.clone(), arg);
+        }
+        _ => spec.paths = vec![arg],
     }
+}
+
+fn is_git_revision(arg: &str) -> bool {
+    if arg.starts_with('-') {
+        return false;
+    }
+    std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{arg}^{{commit}}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn read_text_file_lossy(path: &std::path::Path) -> Result<String> {
+    app::mode::read_text_file(path).with_context(|| format!("Cannot read: {}", path.display()))
 }
 
 fn resolve_configured_width(
@@ -328,7 +357,8 @@ fn main() -> Result<()> {
         history,
         fuzzy: _fuzzy,
         fuzzy_query,
-        diff: diff_spec,
+        diff: mut diff_spec,
+        diff_spec_explicit,
         ..
     } = options;
     let mut fuzzy_initial_query = fuzzy_query;
@@ -429,15 +459,14 @@ fn main() -> Result<()> {
     let mut dir_arg = None;
     let cli_forced_diff = diff_spec.is_some();
     let mut mode_hint: Option<AppMode> = None;
-    let mut diff_path_restriction: Option<String> = None;
     let (src, filename, filepath) = if let Some(f) = file_arg {
         let path = PathBuf::from(&f);
         if picker && !path.is_dir() {
             anyhow::bail!("--picker cannot be combined with a file path");
         }
-        if cli_forced_diff {
+        if let Some(spec) = diff_spec.as_mut() {
             let label = f.clone();
-            diff_path_restriction = Some(f);
+            apply_diff_positional(spec, diff_spec_explicit, f);
             mode_hint = Some(AppMode::Diff);
             (String::new(), label, None)
         } else if path.is_dir() {
@@ -481,9 +510,13 @@ fn main() -> Result<()> {
                 eprintln!("Error: --watch requires a file path (stdin cannot be watched)");
                 std::process::exit(1);
             }
-            let mut stdin = io::stdin().lock();
-            let bytes = read_stdin_bytes_limited(&mut stdin, MAX_STDIN_BYTES)?;
-            if bytes.is_empty() {
+            let bytes = if diff_spec_explicit {
+                Vec::new()
+            } else {
+                let mut stdin = io::stdin().lock();
+                read_stdin_bytes_limited(&mut stdin, MAX_STDIN_BYTES)?
+            };
+            if bytes.is_empty() && !cli_forced_diff {
                 println!("No content to display");
                 return Ok(());
             }
@@ -493,20 +526,26 @@ fn main() -> Result<()> {
             } else {
                 app::mode::detect_mode_from_bytes(&bytes)
             };
-            let buf = if matches!(stdin_mode, AppMode::Diff) {
-                String::from_utf8_lossy(&bytes).into_owned()
-            } else {
-                String::from_utf8(bytes).context("stdin is not valid UTF-8")?
-            };
             mode_hint = Some(stdin_mode);
-            (buf, "stdin".to_string(), None)
+            if bytes.is_empty() {
+                let cwd = std::env::current_dir().context("Cannot read current directory")?;
+                (String::new(), app::path_label(&cwd), None)
+            } else {
+                let buf = if matches!(stdin_mode, AppMode::Diff) {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                } else {
+                    String::from_utf8(bytes).context("stdin is not valid UTF-8")?
+                };
+                (buf, "stdin".to_string(), None)
+            }
         }
     };
 
     let is_file_input = filepath.is_some();
     let watch = watch_from_cli || (watch_from_config && is_file_input);
 
-    let ss = SyntaxSet::load_defaults_newlines();
+    let ss_arc = std::sync::Arc::new(SyntaxSet::load_defaults_newlines());
+    let ss: &SyntaxSet = &ss_arc;
     let ts = ThemeSet::load_defaults();
     append_config_warning(
         &mut config_warning,
@@ -541,18 +580,14 @@ fn main() -> Result<()> {
         None => detect_mode(filepath.as_deref(), cli_forced_diff, &src),
     };
 
-    let src = if matches!(app_mode, AppMode::Diff) && cli_forced_diff && src.is_empty() {
-        if let Some(spec) = diff_spec.as_ref() {
-            run_git_diff_subprocess(spec, diff_path_restriction.as_deref())?
-        } else {
-            src
-        }
-    } else {
-        src
+    let from_git = matches!(app_mode, AppMode::Diff) && cli_forced_diff && src.is_empty();
+    let src = match diff_spec.as_ref() {
+        Some(spec) if from_git => run_git_diff_subprocess(spec)?,
+        _ => src,
     };
     let (src, file_mode) = match app_mode {
         AppMode::Diff => (src, false),
-        AppMode::Document => App::wrap_as_code_block(src, ext, &ss),
+        AppMode::Document => App::wrap_as_code_block(src, ext, ss),
     };
 
     if let Some(ref spec) = inline_spec {
@@ -567,7 +602,7 @@ fn main() -> Result<()> {
         let at = app_theme();
         let mut parsed = parse_markdown_with_width(
             &src,
-            &ss,
+            ss,
             &theme,
             width,
             &at.markdown,
@@ -588,15 +623,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let diff_files = matches!(app_mode, AppMode::Diff).then(|| diff::parse_unified_diff(&src));
     let at = app_theme();
-    let parsed = parse_markdown(
-        &src,
-        &ss,
-        &theme,
-        &at.markdown,
-        file_mode,
-        code_line_numbers,
-    );
+    let parsed = if diff_files.is_some() {
+        crate::markdown::ParseResult::default()
+    } else {
+        parse_markdown(&src, ss, &theme, &at.markdown, file_mode, code_line_numbers)
+    };
     let crate::markdown::ParseResult {
         lines,
         toc,
@@ -606,45 +639,41 @@ fn main() -> Result<()> {
         source_line_map,
         code_blocks,
     } = parsed;
+    let input_label = filename.clone();
     let mut app = App::new_with_source(
         lines,
         toc,
         AppConfig {
             filename,
-            source: src.clone(),
+            source: src,
             debug_input,
             watch,
             filepath,
             last_file_state,
         },
     );
+    app.set_diff_line_numbers(main_line_numbers);
     app.set_links(link_urls, link_spans);
     app.set_code_blocks(code_blocks);
     app.set_line_maps(line_number_map, source_line_map);
     app.set_mode(app_mode);
-    if matches!(app_mode, AppMode::Diff) {
-        let files = diff::parse_unified_diff(&src);
-        if cli_forced_diff && files.is_empty() {
-            println!("No changes to display");
+    app.set_syntax_set(std::sync::Arc::clone(&ss_arc));
+    if let Some(files) = diff_files {
+        if files.is_empty() {
+            if cli_forced_diff {
+                println!("No changes to display");
+            } else {
+                println!("No diff content found in {input_label}");
+            }
             return Ok(());
         }
-        let line_count: usize = files
-            .iter()
-            .flat_map(|f| f.hunks.iter())
-            .map(|h| h.lines.len())
-            .sum();
-        if files.len() > 20 || line_count > 5000 {
-            eprintln!(
-                "leaf: rendering diff ({} files, {} lines)",
-                files.len(),
-                line_count
-            );
-        }
-        let spec = diff_spec.clone().unwrap_or_default();
+        let spec = diff_spec
+            .filter(|_| from_git)
+            .unwrap_or_else(|| app::DiffSpec::patch(input_label.clone()));
         app.install_diff(
             files,
             spec,
-            std::sync::Arc::new(ss.clone()),
+            std::sync::Arc::clone(&ss_arc),
             std::sync::Arc::new(theme),
         );
     }
@@ -717,7 +746,7 @@ fn main() -> Result<()> {
                 area.width, area.height
             ),
         );
-        runtime::prepare_initial_picker_state(area.width, &mut app, &ss, &ts)?;
+        runtime::prepare_initial_picker_state(area.width, &mut app, ss, &ts)?;
         runtime::debug_log(debug_input, "initial_draw draw start");
         terminal.draw(|f| render::ui(f, &mut app))?;
         runtime::debug_log(debug_input, "initial_draw draw done");
@@ -728,7 +757,7 @@ fn main() -> Result<()> {
     let run_result = match initial_draw_result {
         Ok(()) => {
             runtime::debug_log(debug_input, "run loop start");
-            run(&mut terminal, &mut app, &ss, &ts, true)
+            run(&mut terminal, &mut app, ss, &ts, true)
         }
         Err(err) => Err(err),
     };

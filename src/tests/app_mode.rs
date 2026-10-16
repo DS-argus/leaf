@@ -37,8 +37,7 @@ fn install_diff_switches_mode_and_populates_state() {
     assert_eq!(app.mode(), AppMode::Diff);
     let state = app.diff().expect("diff state installed");
     assert_eq!(state.files.len(), 1);
-    assert_eq!(state.hunk_ranges.len(), 1);
-    assert!(!state.line_owner.is_empty());
+    assert_eq!(state.files[0].hunks.len(), 1);
 }
 
 #[test]
@@ -82,8 +81,27 @@ fn install_diff_creates_no_hunks_when_diff_is_empty() {
         std::sync::Arc::new(theme.clone()),
     );
     let state = app.diff().unwrap();
-    assert!(state.hunk_ranges.is_empty());
+    assert!(state.files.iter().all(|f| f.hunks.is_empty()));
     assert!(state.files.is_empty());
+}
+
+#[test]
+fn install_diff_applies_the_configured_line_numbers() {
+    let src = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+    let mut app = make_app();
+    let (ss, theme) = syntect_defaults();
+    app.set_diff_line_numbers(false);
+    app.set_line_numbers_visible(true);
+    app.install_diff(
+        parse_unified_diff(src),
+        DiffSpec::default(),
+        std::sync::Arc::new(ss.clone()),
+        std::sync::Arc::new(theme.clone()),
+    );
+    assert!(
+        !app.is_line_number_visible(),
+        "a reinstall goes back to the configuration, even after `l`"
+    );
 }
 
 #[test]
@@ -320,6 +338,7 @@ fn diff_toggle_preview_cache_hit_avoids_rebuild() {
         before_is_note: false,
         after_is_note: false,
         after_error: Some("SENTINEL".to_string()),
+        first_change_row: 0,
     };
     app.diff_mut()
         .unwrap()
@@ -545,6 +564,7 @@ fn preview_pair_with_error(err: &str) -> PreviewPair {
         before_is_note: false,
         after_is_note: false,
         after_error: Some(err.to_string()),
+        ..PreviewPair::default()
     }
 }
 
@@ -592,4 +612,34 @@ fn status_bar_shows_partial_preview_badge_when_reconstruction_fails() {
         text.contains("Partial preview, source file unavailable"),
         "status bar should show badge, got: {text}",
     );
+}
+
+#[test]
+fn refreshed_diff_flash_uses_success_color() {
+    use crate::{app::DiffFlash, render::build_status_bar, theme::app_theme};
+
+    let mut app = make_app();
+    app.set_diff_flash(DiffFlash::Refreshed);
+    let spans = build_status_bar(&app, 0);
+    let flash = spans
+        .iter()
+        .find(|span| span.content.contains("Diff refreshed"))
+        .expect("status bar should show the diff refresh flash");
+
+    assert_eq!(flash.style.fg, Some(app_theme().ui.status_success_fg));
+}
+
+#[test]
+fn failed_diff_refresh_flash_uses_error_color() {
+    use crate::{app::DiffFlash, render::build_status_bar, theme::app_theme};
+
+    let mut app = make_app();
+    app.set_diff_flash(DiffFlash::RefreshFailed);
+    let spans = build_status_bar(&app, 0);
+    let flash = spans
+        .iter()
+        .find(|span| span.content.contains("Diff refresh failed"))
+        .expect("status bar should show the failed diff refresh flash");
+
+    assert_eq!(flash.style.fg, Some(app_theme().ui.status_error_fg));
 }

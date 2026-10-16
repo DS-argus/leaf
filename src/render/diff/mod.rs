@@ -14,12 +14,16 @@ mod layout;
 mod preview;
 mod truncate;
 
-pub(crate) use body::{resolve_file_syntax, syntect_to_color};
-pub(crate) use builder_split::{build_split_lines, BuiltSplitLines};
+pub(crate) use body::{display_text, resolve_file_syntax, syntect_to_color};
+#[cfg(test)]
+pub(crate) use builder_split::build_split_lines;
+pub(crate) use builder_split::{build_split_lines_with, BuiltSplitLines};
+#[cfg(test)]
 pub(crate) use builder_unified::build_diff_lines;
+pub(crate) use builder_unified::{build_diff_lines_with, count_file_changes, BuiltDiffLines};
 pub(crate) use frame::mode_change_label;
 pub(crate) use frame_close::{close_frame_right, compute_sticky_top_idx, FrameDecorations};
-pub(crate) use gutter::{apply_number_gutter, compute_gutter_widths};
+pub(crate) use gutter::apply_number_gutter;
 pub(crate) use layout::render_diff_panel;
 pub(crate) use preview::render_diff_preview_panel;
 pub(crate) use truncate::{truncate_spans_tail, truncate_unified_body_row};

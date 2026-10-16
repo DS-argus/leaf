@@ -23,6 +23,20 @@ pub(super) fn compute_split_sticky_top_idx_inner(
     Some(top_idx)
 }
 
+pub(crate) const MERGE_GUTTER_SPANS: usize = 4;
+
+pub(crate) fn merge_row_content_start(
+    combined_rows: &[usize],
+    row: usize,
+    gutter_on: bool,
+) -> usize {
+    if gutter_on && combined_rows.binary_search(&row).is_ok() {
+        1 + MERGE_GUTTER_SPANS
+    } else {
+        1
+    }
+}
+
 pub(crate) struct SplitGutterConfig<'a> {
     pub(crate) old_left: &'a [u32],
     pub(crate) new_left: &'a [u32],
@@ -31,6 +45,7 @@ pub(crate) struct SplitGutterConfig<'a> {
     pub(crate) widths: (usize, usize),
     pub(crate) left_disabled: &'a [bool],
     pub(crate) right_disabled: &'a [bool],
+    pub(crate) combined_rows: &'a [usize],
 }
 
 pub(crate) fn apply_split_number_gutter_from_slices(
@@ -47,6 +62,7 @@ pub(crate) fn apply_split_number_gutter_from_slices(
         widths,
         left_disabled,
         right_disabled,
+        combined_rows,
     } = *config;
     let (digit_width_old, digit_width_new) = widths;
     let frame_style = Style::default().fg(theme.frame_fg);
@@ -54,6 +70,19 @@ pub(crate) fn apply_split_number_gutter_from_slices(
     let del_style = Style::default().fg(theme.del_fg);
     for (i, line) in visible_lines.iter_mut().enumerate() {
         let border_pos = line.spans.first().is_some_and(|s| s.content == "│");
+        if border_pos && combined_rows.binary_search(&(scroll + i)).is_ok() {
+            let blank = |w: usize| Span::styled(" ".repeat(w), frame_style);
+            line.spans.splice(
+                1..1,
+                [
+                    blank(digit_width_old),
+                    Span::styled(" ", frame_style),
+                    blank(digit_width_new),
+                    Span::styled("│", frame_style),
+                ],
+            );
+            continue;
+        }
         if !border_pos || line.spans.len() < 7 {
             continue;
         }
@@ -171,10 +200,7 @@ pub(crate) fn apply_split_middle_pad(
 
         if line.spans.len() == 2 && line.spans[1].content == "│" {
             let dot_idx = 1;
-            let left_w: usize = line.spans[..dot_idx]
-                .iter()
-                .map(|s| s.content.chars().count())
-                .sum();
+            let left_w: usize = line.spans[..dot_idx].iter().map(span_width).sum();
             if left_w < middle_col {
                 let pad_len = middle_col - left_w;
                 let pad_str: String = std::iter::repeat_n(' ', pad_len).collect();
@@ -182,10 +208,7 @@ pub(crate) fn apply_split_middle_pad(
                     .insert(dot_idx, Span::styled(pad_str, Style::default()));
             }
             let after_dot = if left_w < middle_col { 3 } else { 2 };
-            let right_w: usize = line.spans[after_dot..]
-                .iter()
-                .map(|s| s.content.chars().count())
-                .sum();
+            let right_w: usize = line.spans[after_dot..].iter().map(span_width).sum();
             let right_budget = right_end_exclusive.saturating_sub(middle_col + 1);
             if right_w < right_budget {
                 let pad_len = right_budget - right_w;
@@ -225,10 +248,7 @@ pub(crate) fn apply_split_middle_pad(
             None
         };
 
-        let left_w: usize = line.spans[..mid_idx]
-            .iter()
-            .map(|s| s.content.chars().count())
-            .sum();
+        let left_w: usize = line.spans[..mid_idx].iter().map(span_width).sum();
 
         let new_mid_idx = if left_w < middle_col {
             let pad_len = middle_col - left_w;
@@ -246,10 +266,7 @@ pub(crate) fn apply_split_middle_pad(
             mid_idx
         };
 
-        let right_w: usize = line.spans[(new_mid_idx + 1)..]
-            .iter()
-            .map(|s| s.content.chars().count())
-            .sum();
+        let right_w: usize = line.spans[(new_mid_idx + 1)..].iter().map(span_width).sum();
 
         let right_budget = right_end_exclusive.saturating_sub(middle_col + 1);
         if right_w < right_budget {
@@ -267,33 +284,13 @@ pub(crate) fn apply_split_middle_pad(
     }
 }
 
-pub(crate) fn compute_gutter_widths(state: &DiffState) -> (usize, usize) {
-    let max_old = state
-        .files
-        .iter()
-        .flat_map(|f| f.hunks.iter())
-        .map(|h| h.header.old_start.saturating_add(h.header.old_count))
-        .max()
-        .unwrap_or(0);
-    let max_new = state
-        .files
-        .iter()
-        .flat_map(|f| f.hunks.iter())
-        .map(|h| h.header.new_start.saturating_add(h.header.new_count))
-        .max()
-        .unwrap_or(0);
-    let digit_width_old = max_old.max(1).to_string().len();
-    let digit_width_new = max_new.max(1).to_string().len();
-    (digit_width_old, digit_width_new)
-}
-
 pub(crate) fn apply_number_gutter(
     visible_lines: &mut [Line<'static>],
     state: &DiffState,
     scroll: usize,
     theme: &DiffTheme,
 ) {
-    let (digit_width_old, digit_width_new) = compute_gutter_widths(state);
+    let (digit_width_old, digit_width_new) = state.gutter_widths;
     let frame_style = Style::default().fg(theme.frame_fg);
     let add_style = Style::default().fg(theme.add_fg);
     let del_style = Style::default().fg(theme.del_fg);

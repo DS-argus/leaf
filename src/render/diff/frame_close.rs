@@ -44,6 +44,12 @@ pub(crate) struct FrameDecorations<'a> {
     pub(crate) auto_tee_at_gutter_col: bool,
     pub(crate) single_column_body_rows: &'a [usize],
     pub(crate) single_column_mid_col: usize,
+    pub(crate) combined_rows: &'a [usize],
+    pub(crate) search_row: Option<(usize, Option<Color>)>,
+}
+
+pub(crate) fn base_row_fill(line: &Line<'_>) -> Option<Color> {
+    line.spans.get(1).and_then(|s| s.style.bg)
 }
 
 pub(crate) fn close_frame_right(
@@ -64,6 +70,8 @@ pub(crate) fn close_frame_right(
         auto_tee_at_gutter_col,
         single_column_body_rows,
         single_column_mid_col,
+        combined_rows,
+        search_row,
     } = *deco;
     if width < 2 {
         return;
@@ -88,15 +96,14 @@ pub(crate) fn close_frame_right(
             '│' => ('│', ' '),
             _ => continue,
         };
-        let existing: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        let existing: usize = line.spans.iter().map(span_width).sum();
 
         if lead == '┌' {
             let status = status_by_line
                 .and_then(|s| s.get(scroll + i))
                 .and_then(|o| o.as_ref());
             if let Some(status_spans) = status {
-                let status_width: usize =
-                    status_spans.iter().map(|s| s.content.chars().count()).sum();
+                let status_width: usize = status_spans.iter().map(span_width).sum();
 
                 let overhead = existing + 1 + status_width + 1 + 1 + 1;
                 if overhead <= target {
@@ -225,7 +232,12 @@ pub(crate) fn close_frame_right(
         }
 
         let body_bg: Option<Color> = if lead == '│' {
-            let span_bg = line.spans.get(1).and_then(|s| s.style.bg);
+            let content_idx =
+                merge_row_content_start(combined_rows, scroll + i, gutter_widths.is_some());
+            let span_bg = match search_row {
+                Some((row, fill)) if row == scroll + i => fill,
+                _ => line.spans.get(content_idx).and_then(|s| s.style.bg),
+            };
             span_bg.or_else(|| {
                 line_nums.and_then(|(old_nums, new_nums)| {
                     let idx = scroll + i;
@@ -245,7 +257,7 @@ pub(crate) fn close_frame_right(
         };
         let needs_mid_splice = lead == '│'
             && single_column_mid_col > 0
-            && single_column_body_rows.contains(&(scroll + i));
+            && single_column_body_rows.binary_search(&(scroll + i)).is_ok();
         let pad_style = body_bg.map_or(style, |bg| Style::default().bg(bg));
 
         if needs_mid_splice {

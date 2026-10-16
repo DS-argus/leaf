@@ -11,7 +11,56 @@ use ratatui::{
     Frame,
 };
 
+fn highlight_active_match(
+    app: &App,
+    visible_lines: &mut [Line<'static>],
+    scroll: usize,
+    split: bool,
+) {
+    let Some(row) = app.active_highlight_line() else {
+        return;
+    };
+    let Some(line) = row
+        .checked_sub(scroll)
+        .and_then(|rel| visible_lines.get_mut(rel))
+    else {
+        return;
+    };
+    let original = split.then(|| line.clone());
+    *line = crate::markdown::highlight_line(line, &app_theme().markdown, app.search_query());
+    if let Some(original) = original {
+        restore_blank_split_side(line, &original);
+    }
+}
+
+fn restore_blank_split_side(line: &mut Line<'static>, original: &Line<'static>) {
+    let Some(mid) = original
+        .spans
+        .iter()
+        .skip(1)
+        .position(|s| s.content == "│")
+        .map(|k| k + 1)
+    else {
+        return;
+    };
+    let blank = |spans: &[Span<'static>]| {
+        !spans.is_empty() && spans.iter().all(|s| s.content.trim().is_empty())
+    };
+    if blank(&original.spans[1..mid]) {
+        for (span, before) in line.spans[1..].iter_mut().zip(&original.spans[1..mid]) {
+            span.style = before.style;
+        }
+    }
+    let right = &original.spans[mid + 1..];
+    if blank(right) {
+        for (span, before) in line.spans.iter_mut().rev().zip(right.iter().rev()) {
+            span.style = before.style;
+        }
+    }
+}
+
 pub(crate) fn render_diff_panel(f: &mut Frame, app: &mut App, area: Rect) {
+    app.highlight_visible_diff_files(area.height as usize);
     let theme = app_theme();
     f.render_widget(
         Paragraph::new("").style(Style::default().bg(theme.ui.content_bg)),
@@ -36,6 +85,7 @@ pub(crate) fn render_diff_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let viewport_height = area.height as usize;
     let visible_end = (scroll + viewport_height).min(app.total());
     let mut visible_lines = app.visible_lines(scroll, visible_end).to_vec();
+    highlight_active_match(app, &mut visible_lines, scroll, false);
 
     let active_file_idx = app.diff_current_file_from_scroll();
     if let Some(state) = app.diff() {
@@ -63,7 +113,7 @@ pub(crate) fn render_diff_panel(f: &mut Frame, app: &mut App, area: Rect) {
         app.diff().map(|s| s.file_header_status.as_slice());
 
     let gutter_widths: Option<(usize, usize)> = if app.is_line_number_visible() {
-        app.diff().map(compute_gutter_widths)
+        app.diff().map(|state| state.gutter_widths)
     } else {
         None
     };
@@ -97,6 +147,14 @@ pub(crate) fn render_diff_panel(f: &mut Frame, app: &mut App, area: Rect) {
             gutter_widths,
             line_nums,
             auto_tee_at_gutter_col: true,
+            search_row: app.active_highlight_line().map(|row| {
+                (
+                    row,
+                    app.visible_lines(row, row + 1)
+                        .first()
+                        .and_then(base_row_fill),
+                )
+            }),
             ..Default::default()
         },
     );
@@ -184,7 +242,10 @@ pub(crate) fn render_diff_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let max_scroll = app.max_scroll();
     let (mouse_col, mouse_row) = app.mouse_position;
-    let sb_x = area.x + area.width - SCROLLBAR_WIDTH;
+    let sb_x = area
+        .x
+        .saturating_add(area.width)
+        .saturating_sub(SCROLLBAR_WIDTH);
     let on_sb_column = mouse_col >= sb_x
         && mouse_col < sb_x + SCROLLBAR_WIDTH
         && mouse_row >= area.y
@@ -223,6 +284,7 @@ pub(crate) struct BuiltSplitLinesRef<'a> {
     pub(crate) file_bottom_idx: &'a [usize],
     pub(crate) meta_only_frame_rows: &'a [usize],
     pub(crate) single_column_body_rows: &'a [usize],
+    pub(crate) combined_rows: &'a [usize],
     pub(crate) left_gutter_disabled: &'a [bool],
     pub(crate) right_gutter_disabled: &'a [bool],
 }
@@ -241,6 +303,7 @@ impl<'a> BuiltSplitLinesRef<'a> {
             file_bottom_idx: state.split_file_bottom_idx.as_slice(),
             meta_only_frame_rows: state.split_meta_only_frame_rows.as_slice(),
             single_column_body_rows: state.split_single_column_body_rows.as_slice(),
+            combined_rows: state.split_combined_rows.as_slice(),
             left_gutter_disabled: state.split_left_gutter_disabled.as_slice(),
             right_gutter_disabled: state.split_right_gutter_disabled.as_slice(),
         }
@@ -266,6 +329,7 @@ pub(super) fn render_split_lines_block(
     } else {
         Vec::new()
     };
+    highlight_active_match(app, &mut visible_lines, scroll, true);
 
     let active_file_idx = app.diff_current_file_from_scroll();
     for (fi, &top_idx) in built.file_top_idx.iter().enumerate() {
@@ -297,6 +361,7 @@ pub(super) fn render_split_lines_block(
                     widths,
                     left_disabled: built.left_gutter_disabled,
                     right_disabled: built.right_gutter_disabled,
+                    combined_rows: built.combined_rows,
                 },
             );
             let (dw_old, dw_new) = widths;
@@ -332,6 +397,25 @@ pub(super) fn render_split_lines_block(
         },
     );
 
+    let single_budget = (content_area.width as usize).saturating_sub(2);
+    for (i, line) in visible_lines.iter_mut().enumerate() {
+        if built
+            .single_column_body_rows
+            .binary_search(&(scroll + i))
+            .is_err()
+        {
+            continue;
+        }
+        let preserved_end =
+            merge_row_content_start(built.combined_rows, scroll + i, gutter_widths.is_some());
+        if line.spans.iter().map(span_width).sum::<usize>() <= single_budget + 1 {
+            continue;
+        }
+        let preserved_width: usize = line.spans.iter().take(preserved_end).map(span_width).sum();
+        let budget = single_budget.saturating_sub(preserved_width.saturating_sub(1));
+        truncate_spans_tail(&mut line.spans, preserved_end, budget, None);
+    }
+
     let status_map: Option<&[Option<Vec<Span<'static>>>]> = Some(built.file_header_status);
     let line_nums: Option<(&[u32], &[u32])> =
         Some((built.line_old_num_right, built.line_new_num_right));
@@ -351,6 +435,10 @@ pub(super) fn render_split_lines_block(
             auto_tee_at_gutter_col: false,
             single_column_body_rows: built.single_column_body_rows,
             single_column_mid_col: mid_col,
+            combined_rows: built.combined_rows,
+            search_row: app
+                .active_highlight_line()
+                .map(|row| (row, built.lines.get(row).and_then(base_row_fill))),
         },
     );
 
@@ -445,6 +533,7 @@ pub(super) fn render_split_lines_block(
                         widths,
                         left_disabled: built.left_gutter_disabled,
                         right_disabled: built.right_gutter_disabled,
+                        combined_rows: built.combined_rows,
                     },
                 );
             }
@@ -466,6 +555,8 @@ pub(super) fn render_split_lines_block(
                     auto_tee_at_gutter_col: false,
                     single_column_body_rows: &[],
                     single_column_mid_col: 0,
+                    combined_rows: &[],
+                    search_row: None,
                 },
             );
 
@@ -489,7 +580,10 @@ pub(super) fn render_split_lines_block(
 
     let max_scroll = lines_total.saturating_sub(viewport_height);
     let (mouse_col, mouse_row) = app.mouse_position;
-    let sb_x = area.x + area.width - SCROLLBAR_WIDTH;
+    let sb_x = area
+        .x
+        .saturating_add(area.width)
+        .saturating_sub(SCROLLBAR_WIDTH);
     let on_sb_column = mouse_col >= sb_x
         && mouse_col < sb_x + SCROLLBAR_WIDTH
         && mouse_row >= area.y
@@ -526,7 +620,7 @@ pub(super) fn render_split_panel(f: &mut Frame, app: &App, area: Rect, content_a
         return;
     };
     let gutter_widths = if app.is_line_number_visible() {
-        Some(compute_gutter_widths(state))
+        Some(state.gutter_widths)
     } else {
         None
     };

@@ -363,7 +363,7 @@ fn record_code_block(
     });
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct ParseResult {
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) toc: Vec<TocEntry>,

@@ -78,9 +78,11 @@ pub(super) fn build_file_top_frame_parts(
 pub(super) fn replace_tee_at_col(line: &mut Line<'static>, col: usize) {
     let mut acc = 0usize;
     for span in line.spans.iter_mut() {
-        let span_len = span.content.chars().count();
+        let span_len = span_width(span);
         if col < acc + span_len {
-            let local = col - acc;
+            let Some(local) = char_index_at_col(&span.content, col - acc) else {
+                return;
+            };
             let chars: Vec<char> = span.content.chars().collect();
             match chars.get(local).copied() {
                 Some('┬') | Some('┴') | Some('┼') => {}
@@ -108,7 +110,7 @@ pub(super) fn strip_mid_at_col(line: &mut Line<'static>, col: usize) {
     let mut target: Option<usize> = None;
     let mut acc = 0usize;
     for (k, span) in line.spans.iter().enumerate() {
-        let span_len = span.content.chars().count();
+        let span_len = span_width(span);
         if col < acc + span_len {
             target = Some(k);
             break;
@@ -116,7 +118,9 @@ pub(super) fn strip_mid_at_col(line: &mut Line<'static>, col: usize) {
         acc += span_len;
     }
     let Some(target_idx) = target else { return };
-    let local = col - acc;
+    let Some(local) = char_index_at_col(&line.spans[target_idx].content, col - acc) else {
+        return;
+    };
     let chars: Vec<char> = line.spans[target_idx].content.chars().collect();
     match chars.get(local).copied() {
         Some('│') | Some('┬') | Some('┴') | Some('┼') => {}
@@ -243,10 +247,6 @@ pub(super) fn active_frame_tint(theme: &DiffTheme) -> Color {
 
 pub(super) fn build_file_bottom_frame(theme: &DiffTheme) -> Line<'static> {
     Line::from(Span::styled("└─", Style::default().fg(theme.frame_fg)))
-}
-
-pub(super) fn build_border_span(theme: &DiffTheme) -> Span<'static> {
-    Span::styled("│ ", Style::default().fg(theme.frame_fg))
 }
 
 pub(super) fn build_border_span_bare(theme: &DiffTheme) -> Span<'static> {

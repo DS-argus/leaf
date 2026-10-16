@@ -24,9 +24,34 @@ fn detects_diff_combined_prefix_bytes() {
 }
 
 #[test]
-fn ignores_diff_signature_after_first_non_blank_line() {
-    let buf = b"# Heading\n\ndiff --git a/x b/x\n";
+fn ignores_diff_signature_inside_a_fenced_block() {
+    let buf = b"# Heading\n\n```diff\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n```\n";
     assert_eq!(detect_mode_from_bytes(buf), AppMode::Document);
+}
+
+#[test]
+fn finds_a_diff_after_a_preamble_on_stdin() {
+    let stat = b" src/a.rs | 2 +-\n 1 file changed\n\ndiff --git a/src/a.rs b/src/a.rs\n";
+    assert_eq!(detect_mode_from_bytes(stat), AppMode::Diff);
+    let gnu = b"Only in b: new\ndiff -ruN a/f b/f\n--- a/f\t2024-01-01\n+++ b/f\t2024-01-01\n@@ -1 +1 @@\n";
+    assert_eq!(detect_mode_from_bytes(gnu), AppMode::Diff);
+    let svn =
+        b"Index: f.txt\n===================================================================\n\
+                --- f.txt\t(revision 1)\n+++ f.txt\t(working copy)\n@@ -1 +1 @@\n";
+    assert_eq!(detect_mode_from_bytes(svn), AppMode::Diff);
+}
+
+#[test]
+fn markdown_files_are_never_detected_as_diffs() {
+    let src = "commit 0123456789abcdef0123456789abcdef01234567\n";
+    assert_eq!(
+        detect_mode(Some(std::path::Path::new("note.md")), false, src),
+        AppMode::Document
+    );
+    assert_eq!(
+        detect_mode_from_content("commit 1234567 was the culprit\n"),
+        AppMode::Document
+    );
 }
 
 #[test]
@@ -258,4 +283,73 @@ fn parse_cli_rejects_diff_with_fuzzy() {
         err.contains("--diff cannot be combined with --fuzzy"),
         "{err}"
     );
+}
+
+#[test]
+fn git_show_and_format_patch_headers_are_diffs() {
+    let show = b"commit 0123456789abcdef0123456789abcdef01234567\nAuthor: a <a@a>\n\n    msg\n";
+    assert_eq!(detect_mode_from_bytes(show), AppMode::Diff);
+    let patch = b"From 0123456789abcdef0123456789abcdef01234567 Mon Sep 17 00:00:00 2001\n";
+    assert_eq!(detect_mode_from_bytes(patch), AppMode::Diff);
+}
+
+#[test]
+fn plain_unified_diff_is_detected() {
+    let src = "--- a.txt\t2024-01-01\n+++ b.txt\t2024-01-01\n@@ -1 +1 @@\n-a\n+b\n";
+    assert_eq!(detect_mode_from_content(src), AppMode::Diff);
+    assert_eq!(detect_mode_from_bytes(src.as_bytes()), AppMode::Diff);
+}
+
+#[test]
+fn prose_starting_with_commit_or_from_stays_document() {
+    assert_eq!(
+        detect_mode_from_content("commit message guidelines\n"),
+        AppMode::Document
+    );
+    assert_eq!(
+        detect_mode_from_content("From the author\n"),
+        AppMode::Document
+    );
+    assert_eq!(
+        detect_mode_from_content("--- \ntitle: x\n---\n"),
+        AppMode::Document
+    );
+}
+
+#[test]
+fn parse_cli_tracks_explicit_diff_spec() {
+    let bare = parse_cli(&["leaf".into(), "--diff".into()]).unwrap();
+    assert!(!bare.diff_spec_explicit);
+    let named = parse_cli(&["leaf".into(), "--diff".into(), "working".into()]).unwrap();
+    assert!(named.diff_spec_explicit);
+    let equals = parse_cli(&["leaf".into(), "-d=HEAD".into()]).unwrap();
+    assert!(equals.diff_spec_explicit);
+}
+
+#[test]
+fn setext_index_heading_and_nested_fences_stay_documents() {
+    let heading = b"Index: Terms\n============\n\nSome prose.\n";
+    assert_eq!(detect_mode_from_bytes(heading), AppMode::Document);
+    let nested =
+        b"# Doc\n\n````md\n```diff\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n```\n````\n";
+    assert_eq!(detect_mode_from_bytes(nested), AppMode::Document);
+    let mixed = b"# Doc\n\n~~~\n```\ndiff --git a/x b/x\n~~~\n";
+    assert_eq!(detect_mode_from_bytes(mixed), AppMode::Document);
+}
+
+#[test]
+fn fence_indented_four_spaces_is_code_not_a_fence() {
+    let src = b"# Doc\n\n    ```\n    code\n\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+    assert_eq!(detect_mode_from_bytes(src), AppMode::Diff);
+    let tab = b"# Doc\n\n\t```\n\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+    assert_eq!(detect_mode_from_bytes(tab), AppMode::Diff);
+}
+
+#[test]
+fn svn_header_needs_the_old_file_line_right_after_the_rule() {
+    let svn = b"Some preamble\nIndex: f.txt\n===================================================================\n\
+                --- f.txt\t(revision 1)\n+++ f.txt\t(working copy)\n@@ -1 +1 @@\n-a\n+b\n";
+    assert_eq!(detect_mode_from_bytes(svn), AppMode::Diff);
+    let far = b"Some preamble\nIndex: Terms\n============\n\n--- quote\n";
+    assert_eq!(detect_mode_from_bytes(far), AppMode::Document);
 }

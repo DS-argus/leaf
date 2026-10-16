@@ -89,32 +89,32 @@ impl App {
     }
 
     pub(super) fn sync_diff_file_from_scroll(&mut self) {
-        if self.diff_state.is_none() {
+        let Some(resolved) = self.diff_file_at_row(self.scroll) else {
             return;
-        }
-        let scroll = self.scroll;
-        let resolved: Option<usize> = {
-            let state = self.diff_state.as_ref().expect("checked");
-            if state.preview_visible || state.files.is_empty() {
-                return;
-            }
-            let owner: &[Option<usize>] = match state.layout {
-                crate::diff::DiffLayout::Unified => &state.file_owner,
-                crate::diff::DiffLayout::Split => &state.split_file_owner,
-            };
-
-            owner
-                .get(scroll)
-                .copied()
-                .flatten()
-                .or_else(|| owner[..scroll].iter().rev().flatten().next().copied())
-                .or_else(|| owner.iter().skip(scroll).flatten().next().copied())
         };
         let state = self.diff_state.as_mut().expect("checked");
         state.nav_pinned_file_idx = None;
         if let Some(fi) = resolved {
             state.current_file_idx = fi.min(state.files.len() - 1);
         }
+    }
+
+    pub(super) fn pin_diff_file_of_row(&mut self, row: usize) {
+        let Some(Some(fi)) = self.diff_file_at_row(row) else {
+            return;
+        };
+        let state = self.diff_state.as_mut().expect("checked");
+        let fi = state.clamp_file_idx(fi);
+        state.current_file_idx = fi;
+        state.nav_pinned_file_idx = Some(fi);
+    }
+
+    fn diff_file_at_row(&self, row: usize) -> Option<Option<usize>> {
+        let state = self.diff_state.as_ref()?;
+        if state.preview_visible || state.files.is_empty() {
+            return None;
+        }
+        Some(state.row_file(state.layout, row))
     }
 
     pub(crate) fn toggle_reverse_mode(&mut self) {
