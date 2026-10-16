@@ -106,7 +106,10 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let (mouse_col, mouse_row) = app.mouse_position;
-    let sb_x = area.x + area.width - SCROLLBAR_WIDTH;
+    let sb_x = area
+        .x
+        .saturating_add(area.width)
+        .saturating_sub(SCROLLBAR_WIDTH);
     let on_sb_column = mouse_col >= sb_x
         && mouse_col < sb_x + SCROLLBAR_WIDTH
         && mouse_row >= area.y

@@ -23,6 +23,9 @@ impl App {
         let current = current_theme_selection();
         self.theme_picker.index = theme_preset_index(current.preset_hint());
         self.theme_picker.original = Some(current);
+        if self.is_diff_mode() {
+            return;
+        }
         let original_preview = self.content_snapshot();
         self.store_current_theme_preview_from(&original_preview);
         self.theme_picker.original_preview = Some(original_preview);
@@ -98,6 +101,10 @@ impl App {
             return;
         }
         set_theme_preset(preset);
+        if self.is_diff_mode() {
+            self.rebuild_diff_view(ss, current_syntect_theme(themes));
+            return;
+        }
         let cached = self
             .theme_picker
             .preview_cache
@@ -126,7 +133,15 @@ impl App {
 
     pub(crate) fn restore_theme_picker_preview(&mut self, ss: &SyntaxSet, themes: &ThemeSet) {
         if let Some(original) = self.theme_picker.original.take() {
+            let changed = original != current_theme_selection();
             set_theme_selection(original);
+            if self.is_diff_mode() {
+                if changed {
+                    self.rebuild_diff_view(ss, current_syntect_theme(themes));
+                }
+                self.close_theme_picker();
+                return;
+            }
             if let Some(parsed) = self.theme_picker.original_preview.take() {
                 self.replace_content(parsed);
             } else {

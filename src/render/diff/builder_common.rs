@@ -1,5 +1,71 @@
 pub(super) const SYNTECT_SKIP_HUNK_LINES: usize = 2000;
 
+pub(super) struct SideHighlighters<'a> {
+    syntax: Option<&'a syntect::parsing::SyntaxReference>,
+    theme: &'a syntect::highlighting::Theme,
+    old: Option<syntect::easy::HighlightLines<'a>>,
+    new: Option<syntect::easy::HighlightLines<'a>>,
+    buf: String,
+}
+
+impl<'a> SideHighlighters<'a> {
+    pub(super) fn new(
+        syntax: Option<&'a syntect::parsing::SyntaxReference>,
+        theme: &'a syntect::highlighting::Theme,
+    ) -> Self {
+        let mut highlighters = Self {
+            syntax,
+            theme,
+            old: None,
+            new: None,
+            buf: String::new(),
+        };
+        highlighters.reset();
+        highlighters
+    }
+
+    pub(super) fn old_side(&mut self) -> Option<&mut syntect::easy::HighlightLines<'a>> {
+        self.old.as_mut()
+    }
+
+    pub(super) fn new_side(&mut self) -> Option<&mut syntect::easy::HighlightLines<'a>> {
+        self.new.as_mut()
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(super) fn sides(
+        &mut self,
+        enabled: bool,
+    ) -> (
+        Option<&mut syntect::easy::HighlightLines<'a>>,
+        Option<&mut syntect::easy::HighlightLines<'a>>,
+    ) {
+        if enabled {
+            (self.old.as_mut(), self.new.as_mut())
+        } else {
+            (None, None)
+        }
+    }
+
+    pub(super) fn advance_old(&mut self, text: &str, ss: &syntect::parsing::SyntaxSet) {
+        if let Some(hl) = self.old.as_mut() {
+            self.buf.clear();
+            self.buf.push_str(text);
+            self.buf.push('\n');
+            let _ = hl.highlight_line(&self.buf, ss);
+        }
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.old = self
+            .syntax
+            .map(|s| syntect::easy::HighlightLines::new(s, self.theme));
+        self.new = self
+            .syntax
+            .map(|s| syntect::easy::HighlightLines::new(s, self.theme));
+    }
+}
+
 macro_rules! assert_sidecars_parallel {
     ($lines:expr, $($sidecar:expr),+ $(,)?) => {
         $(
@@ -69,4 +135,20 @@ pub(super) fn build_combined_half(
     }
     spans.push(Span::styled(content.to_string(), content_style));
     spans
+}
+
+pub(super) fn take_line_numbers(
+    (in_old, in_new): (bool, bool),
+    cur_old: &mut u32,
+    cur_new: &mut u32,
+) -> (u32, u32) {
+    let o = if in_old { *cur_old } else { 0 };
+    let n = if in_new { *cur_new } else { 0 };
+    if in_old {
+        *cur_old = cur_old.saturating_add(1);
+    }
+    if in_new {
+        *cur_new = cur_new.saturating_add(1);
+    }
+    (o, n)
 }

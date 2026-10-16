@@ -632,6 +632,15 @@ fn handle_shared_keys(
 }
 
 fn reload_helper(app: &mut App, ss: &SyntaxSet, themes: &ThemeSet) {
+    if app.is_diff_mode() {
+        let flash = if app.refresh_diff(ss, themes) {
+            crate::app::DiffFlash::Refreshed
+        } else {
+            crate::app::DiffFlash::RefreshFailed
+        };
+        app.set_diff_flash(flash);
+        return;
+    }
     if app.filepath().is_none() {
         let flash = app.watch_flash_for_no_file();
         app.set_watch_flash(flash);

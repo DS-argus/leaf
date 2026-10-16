@@ -50,7 +50,9 @@ pub(crate) enum HistoryFlash {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DiffFlash {
-    SplitBuilding,
+    SearchInPreview,
+    Refreshed,
+    RefreshFailed,
 }
 
 impl App {

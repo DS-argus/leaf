@@ -52,7 +52,7 @@ mod content;
 pub(crate) use content::{FileChange, FileState};
 
 pub(crate) mod mode;
-pub(crate) use mode::{AppMode, DiffSource, DiffSpec, DiffState, HunkRange, PreviewPair};
+pub(crate) use mode::{AppMode, DiffSource, DiffSpec, DiffState, PreviewPair};
 
 mod diff_nav;
 mod diff_preview;
@@ -151,6 +151,7 @@ pub(crate) struct App {
     line_number_map: Vec<usize>,
     source_line_map: Vec<usize>,
     line_number_visible: bool,
+    diff_line_numbers: bool,
     pub(super) search: SearchState,
     pub(super) goto_line: GotoLineState,
     pub(super) debug_input: bool,
@@ -187,8 +188,11 @@ pub(crate) struct App {
     pub(super) file_history_length: Option<i32>,
     pub(super) history_flash: Option<(HistoryFlash, std::time::Instant)>,
     pub(super) diff_flash: Option<(DiffFlash, std::time::Instant)>,
-    pub(super) pending_split_build:
-        Option<std::sync::mpsc::Receiver<crate::render::BuiltSplitLines>>,
+    pub(super) syntax_set: Option<std::sync::Arc<syntect::parsing::SyntaxSet>>,
+    pub(super) diff_highlight: Option<(
+        std::sync::Arc<syntect::parsing::SyntaxSet>,
+        std::sync::Arc<syntect::highlighting::Theme>,
+    )>,
     pub(super) history_error_receiver:
         Option<std::sync::mpsc::Receiver<history::HistoryWriteError>>,
     pub(super) history_pending_removals: Vec<std::path::PathBuf>,
@@ -301,6 +305,7 @@ impl App {
             line_number_map: Vec::new(),
             source_line_map: Vec::new(),
             line_number_visible: false,
+            diff_line_numbers: true,
             search: SearchState {
                 mode: false,
                 draft: String::new(),
@@ -309,6 +314,7 @@ impl App {
                 idx: 0,
                 draft_hash: 0,
                 query_hash: 0,
+                layout_switch: None,
             },
             goto_line: GotoLineState {
                 mode: false,
@@ -362,7 +368,8 @@ impl App {
             file_history_length: None,
             history_flash: None,
             diff_flash: None,
-            pending_split_build: None,
+            syntax_set: None,
+            diff_highlight: None,
             history_error_receiver: None,
             history_pending_removals: Vec::new(),
             theme_picker: ThemePickerState {
@@ -439,6 +446,10 @@ impl App {
         self.line_number_visible = value;
     }
 
+    pub(crate) fn set_diff_line_numbers(&mut self, value: bool) {
+        self.diff_line_numbers = value;
+    }
+
     pub(crate) fn set_code_line_numbers(&mut self, value: bool) {
         self.code_line_numbers = value;
     }
@@ -485,8 +496,7 @@ impl App {
 
     fn toc_content_width(&self, area_width: u16) -> u16 {
         let raw = crate::picker_width::picker_width_raw(self.toc_width, area_width);
-        let max_content = Self::max_toc_content_width(area_width);
-        raw.clamp(crate::picker_width::TOC_WIDTH_MIN, max_content)
+        clamp_toc_content(raw, Self::max_toc_content_width(area_width))
     }
 
     pub(crate) fn toc_width_cells(&self, area_width: u16) -> u16 {
@@ -511,9 +521,10 @@ impl App {
 
     pub(crate) fn set_toc_width_cells(&mut self, total_cells: u16) {
         let max_content = Self::max_toc_content_width(self.terminal_width);
-        let content = total_cells.saturating_sub(1);
-        let clamped = content.clamp(crate::picker_width::TOC_WIDTH_MIN, max_content);
-        self.set_toc_content_width(clamped);
+        self.set_toc_content_width(clamp_toc_content(
+            total_cells.saturating_sub(1),
+            max_content,
+        ));
     }
 
     fn set_toc_content_width(&mut self, width: u16) {
@@ -960,6 +971,20 @@ impl App {
         self.source = src;
     }
 
+    pub(crate) fn set_syntax_set(&mut self, ss: std::sync::Arc<syntect::parsing::SyntaxSet>) {
+        self.syntax_set = Some(ss);
+    }
+
+    fn shared_syntax_set(
+        &self,
+        ss: &syntect::parsing::SyntaxSet,
+    ) -> std::sync::Arc<syntect::parsing::SyntaxSet> {
+        match &self.syntax_set {
+            Some(shared) => std::sync::Arc::clone(shared),
+            None => std::sync::Arc::new(ss.clone()),
+        }
+    }
+
     pub(crate) fn install_diff_from_src(
         &mut self,
         src: &str,
@@ -968,7 +993,7 @@ impl App {
         themes: &syntect::highlighting::ThemeSet,
     ) {
         let files = crate::diff::parse_unified_diff(src);
-        let ss_arc = std::sync::Arc::new(ss.clone());
+        let ss_arc = self.shared_syntax_set(ss);
         let theme_arc = std::sync::Arc::new(crate::theme::current_syntect_theme(themes).clone());
         self.install_diff(files, spec, ss_arc, theme_arc);
     }
@@ -987,18 +1012,10 @@ impl App {
             .as_ref()
             .map(|s| s.layout)
             .unwrap_or_default();
-        let built = crate::render::build_diff_lines(&files, &ss, &theme);
+        let built = crate::render::build_diff_lines_with(&files, &ss, &theme, false);
         let files_arc = std::sync::Arc::new(files);
         let mut state = DiffState::new(files_arc.clone(), spec);
-        state.hunk_ranges = built.hunk_ranges;
-        state.line_owner = built.line_owner;
-        state.line_old_num = built.line_old_num;
-        state.line_new_num = built.line_new_num;
-        state.file_header_status = built.file_header_status;
-        state.file_owner = built.file_owner;
-        state.file_top_idx = built.file_top_idx;
-        state.file_bottom_idx = built.file_bottom_idx;
-        state.meta_only_bottom_rows = built.meta_only_bottom_rows;
+        let lines = apply_unified_build(&mut state, built);
         state.tree_visible = carry_tree_visible;
         state.layout = carry_layout;
         state.split_ready = false;
@@ -1009,63 +1026,188 @@ impl App {
         state.preview_scroll_cache = std::collections::HashMap::new();
         state.nav_pinned_file_idx = None;
         self.diff_state = Some(state);
+        self.search.layout_switch = None;
         self.diff_tree_scroll_hint_dismissed = false;
-        self.replace_content(crate::markdown::ParseResult {
-            lines: built.lines,
-            toc: Vec::new(),
-            link_spans: Vec::new(),
-            link_urls: Vec::new(),
-            line_number_map: Vec::new(),
-            source_line_map: Vec::new(),
-            code_blocks: Vec::new(),
-        });
+        self.replace_content(diff_parse_result(lines));
         self.scroll = 0;
-        self.line_number_visible = true;
-
-        let prewarm = !files_arc.is_empty()
-            && std::thread::available_parallelism()
-                .map(|n| n.get() > 1)
-                .unwrap_or(false);
-        if prewarm {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let files_for_worker = std::sync::Arc::clone(&files_arc);
-            let ss_for_worker = std::sync::Arc::clone(&ss);
-            let theme_for_worker = std::sync::Arc::clone(&theme);
-            std::thread::spawn(move || {
-                let built = crate::render::build_split_lines(
-                    &files_for_worker,
-                    &ss_for_worker,
-                    &theme_for_worker,
-                );
-                let _ = tx.send(built);
-            });
-            self.pending_split_build = Some(rx);
-        } else {
-            self.pending_split_build = None;
+        self.line_number_visible = self.diff_line_numbers;
+        if matches!(carry_layout, crate::diff::DiffLayout::Split) {
+            self.build_split_now(&ss, &theme);
         }
+        self.diff_highlight = Some((ss, theme));
     }
 
-    pub(crate) fn has_pending_split_build(&self) -> bool {
-        self.pending_split_build.is_some()
-    }
-
-    pub(crate) fn poll_pending_split_build(&mut self) -> bool {
-        let Some(rx) = self.pending_split_build.as_ref() else {
-            return false;
-        };
-        let Ok(built) = rx.try_recv() else {
-            return false;
-        };
-        self.pending_split_build = None;
+    pub(crate) fn highlight_visible_diff_files(&mut self, viewport_rows: usize) {
+        let scroll = self.scroll;
         let Some(state) = self.diff_state.as_mut() else {
-            return false;
+            return;
         };
-        apply_split_build(state, built);
-        true
+        if state.preview_visible {
+            return;
+        }
+        let layout = state.layout;
+        let split = matches!(layout, crate::diff::DiffLayout::Split);
+        if split && !state.split_ready {
+            return;
+        }
+        let mut pending: Vec<usize> = {
+            let owner = state.file_owner(layout);
+            let flags = if split {
+                &state.split_highlighted_files
+            } else {
+                &state.highlighted_files
+            };
+            let end = scroll.saturating_add(viewport_rows).min(owner.len());
+            owner[scroll.min(end)..end]
+                .iter()
+                .flatten()
+                .copied()
+                .filter(|&fi| !flags.get(fi).copied().unwrap_or(true))
+                .collect()
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let Some((ss, theme)) = self.diff_highlight.clone() else {
+            return;
+        };
+        pending.dedup();
+        for fi in pending {
+            let Some((top, bottom)) = state.file_bounds(layout, fi) else {
+                continue;
+            };
+            let file = &state.files[fi..=fi];
+            let (mut rows, file_bottom) = if split {
+                let built = crate::render::build_split_lines_with(file, &ss, &theme, true);
+                (built.lines, built.file_bottom_idx[0])
+            } else {
+                let built = crate::render::build_diff_lines_with(file, &ss, &theme, true);
+                (built.lines, built.file_bottom_idx[0])
+            };
+            rows.truncate(file_bottom + 1);
+            let (target, flags) = if split {
+                (&mut state.split_lines, &mut state.split_highlighted_files)
+            } else {
+                (&mut self.lines, &mut state.highlighted_files)
+            };
+            debug_assert_eq!(rows.len(), bottom - top + 1, "highlighted rows must match");
+            if rows.len() == bottom - top + 1 {
+                for (dst, row) in target[top..=bottom].iter_mut().zip(rows) {
+                    *dst = row;
+                }
+            }
+            flags[fi] = true;
+        }
+        self.highlighted_line_cache = None;
     }
 }
 
+impl App {
+    pub(crate) fn rebuild_diff_view(
+        &mut self,
+        ss: &syntect::parsing::SyntaxSet,
+        theme: &syntect::highlighting::Theme,
+    ) {
+        let Some(state) = self.diff_state.as_ref() else {
+            return;
+        };
+        let files = std::sync::Arc::clone(&state.files);
+        let built = crate::render::build_diff_lines_with(&files, ss, theme, false);
+        let ss_arc = self.shared_syntax_set(ss);
+        self.diff_highlight = Some((ss_arc, std::sync::Arc::new(theme.clone())));
+        let state = self.diff_state.as_mut().expect("checked");
+        let lines = apply_unified_build(state, built);
+        state.split_ready = false;
+        let preview_visible = state.preview_visible;
+        let split = matches!(state.layout, crate::diff::DiffLayout::Split);
+        let current = state.clamp_file_idx(state.current_file_idx);
+        state.preview_cache.clear();
+        let preview_input = preview_visible.then(|| {
+            let active = state.clamp_file_idx(state.tree_active_idx);
+            (active, state.spec.clone())
+        });
+        self.replace_content(diff_parse_result(lines));
+
+        if split {
+            self.build_split_now(ss, theme);
+        }
+        if let Some((active, spec)) = preview_input.filter(|(active, _)| *active < files.len()) {
+            let pair = crate::app::build_preview_pair(&files[active], &spec, ss, theme);
+            if let Some(state) = self.diff_state.as_mut() {
+                state.preview_cache.insert(active, pair);
+            }
+        }
+        if !preview_visible {
+            if let Some(state) = self.diff_state.as_mut() {
+                state.nav_pinned_file_idx = Some(current);
+            }
+        }
+        self.clamp_scroll();
+        self.refresh_diff_search();
+    }
+}
+
+fn clamp_toc_content(width: u16, max_content: u16) -> u16 {
+    width.clamp(
+        crate::picker_width::TOC_WIDTH_MIN.min(max_content),
+        max_content,
+    )
+}
+
+fn diff_parse_result(lines: Vec<Line<'static>>) -> crate::markdown::ParseResult {
+    crate::markdown::ParseResult {
+        lines,
+        ..Default::default()
+    }
+}
+
+fn apply_unified_build(
+    state: &mut DiffState,
+    built: crate::render::BuiltDiffLines,
+) -> Vec<Line<'static>> {
+    state.line_old_num = built.line_old_num;
+    state.line_new_num = built.line_new_num;
+    state.file_header_status = built.file_header_status;
+    state.file_owner = built.file_owner;
+    state.file_top_idx = built.file_top_idx;
+    state.file_bottom_idx = built.file_bottom_idx;
+    state.meta_only_bottom_rows = built.meta_only_bottom_rows;
+    state.highlighted_files = vec![false; state.file_top_idx.len()];
+    state.search_lines = diff_search_lines(&built.lines);
+    built.lines
+}
+
+fn diff_search_lines(lines: &[Line<'static>]) -> Vec<String> {
+    let is_decoration = |c: char| ('\u{2500}'..='\u{257f}').contains(&c);
+    lines
+        .iter()
+        .map(|line| {
+            let mut text = String::new();
+            let mut after_border = false;
+            for span in &line.spans {
+                let content = span.content.as_ref();
+                if !content.is_empty() && content.chars().all(is_decoration) {
+                    after_border = true;
+                    continue;
+                }
+                let sigil = after_border && matches!(content, "+" | "-" | " ");
+                after_border = false;
+                if !sigil {
+                    text.push_str(content);
+                }
+            }
+            if text.is_ascii() {
+                text.make_ascii_lowercase();
+                text
+            } else {
+                text.to_lowercase()
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn apply_split_build(state: &mut DiffState, built: crate::render::BuiltSplitLines) {
+    let split_search_lines = diff_search_lines(&built.lines);
     state.split_lines = built.lines;
     state.split_line_old_num_left = built.line_old_num_left;
     state.split_line_new_num_left = built.line_new_num_left;
@@ -1077,8 +1219,11 @@ pub(crate) fn apply_split_build(state: &mut DiffState, built: crate::render::Bui
     state.split_file_bottom_idx = built.file_bottom_idx;
     state.split_meta_only_frame_rows = built.meta_only_frame_rows;
     state.split_single_column_body_rows = built.single_column_body_rows;
+    state.split_combined_rows = built.combined_rows;
     state.split_left_gutter_disabled = built.left_gutter_disabled;
     state.split_right_gutter_disabled = built.right_gutter_disabled;
+    state.split_search_lines = split_search_lines;
+    state.split_highlighted_files = vec![false; state.split_file_top_idx.len()];
     state.split_ready = true;
 }
 

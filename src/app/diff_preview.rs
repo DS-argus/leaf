@@ -16,92 +16,124 @@ fn is_usable_blob_sha(sha: &str) -> bool {
     !sha.is_empty() && !sha.chars().all(|c| c == '0')
 }
 
-pub(crate) fn fetch_before(file: &DiffFile, _spec: &DiffSpec) -> String {
-    if let Some(sha) = file.old_blob_sha.as_deref() {
-        if is_usable_blob_sha(sha) {
-            if let Ok(out) = std::process::Command::new("git")
-                .arg("show")
-                .arg(sha)
-                .output()
-            {
-                if out.status.success() {
-                    return String::from_utf8_lossy(&out.stdout).into_owned();
-                }
-            }
-        }
-    }
-    reconstruct_before_from_hunks(file)
+fn git_stdout(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").args(args).output().ok()?;
+    out.status
+        .success()
+        .then(|| super::mode::decode_lossy(out.stdout))
 }
 
-pub(crate) fn fetch_after(file: &DiffFile, spec: &DiffSpec) -> (String, Option<String>) {
+fn git_show(object: &str) -> Option<String> {
+    git_stdout(&["show", "--no-color", object])
+}
+
+fn blob(sha: Option<&str>) -> Option<String> {
+    sha.filter(|sha| is_usable_blob_sha(sha)).and_then(git_show)
+}
+
+fn fetch_before_blob(file: &DiffFile) -> Option<String> {
+    blob(file.old_blob_sha.as_deref())
+}
+
+#[cfg(test)]
+pub(crate) fn fetch_before(file: &DiffFile) -> String {
+    fetch_before_blob(file).unwrap_or_else(|| fragment_sides(file).0)
+}
+
+pub(super) fn current_path(file: &DiffFile) -> &str {
+    if file.new_path.is_empty() {
+        &file.old_path
+    } else {
+        &file.new_path
+    }
+}
+
+fn read_worktree_file(path: &str) -> Option<String> {
+    let root = git_stdout(&["rev-parse", "--show-toplevel"])?;
+    let bytes = std::fs::read(std::path::Path::new(root.trim()).join(path)).ok()?;
+    Some(super::mode::decode_lossy(bytes))
+}
+
+fn fetch_after_source(file: &DiffFile, spec: &DiffSpec) -> Option<String> {
+    let new_blob = || blob(file.new_blob_sha.as_deref());
     match &spec.source {
-        DiffSource::Working => {
-            let path = if !file.new_path.is_empty() && file.new_path != "/dev/null" {
-                file.new_path.as_str()
-            } else {
-                file.old_path.as_str()
-            };
-            if let Ok(s) = std::fs::read_to_string(path) {
-                return (s, None);
-            }
-        }
-        DiffSource::Cached => {
-            let path = if !file.new_path.is_empty() && file.new_path != "/dev/null" {
-                file.new_path.as_str()
-            } else {
-                file.old_path.as_str()
-            };
-            if let Ok(out) = std::process::Command::new("git")
-                .arg("show")
-                .arg(format!(":{path}"))
-                .output()
-            {
-                if out.status.success() {
-                    return (String::from_utf8_lossy(&out.stdout).into_owned(), None);
-                }
-            }
-        }
-        DiffSource::Ref(_) => {}
-    }
-    if let Some(sha) = file.new_blob_sha.as_deref() {
-        if is_usable_blob_sha(sha) {
-            if let Ok(out) = std::process::Command::new("git")
-                .arg("show")
-                .arg(sha)
-                .output()
-            {
-                if out.status.success() {
-                    return (String::from_utf8_lossy(&out.stdout).into_owned(), None);
-                }
-            }
-        }
-    }
-    let before = fetch_before(file, spec);
-    match reconstruct_after_from_hunks(&before, file) {
-        Ok(s) => (s, None),
-        Err(e) => (before, Some(e)),
+        DiffSource::Ref(rev) if rev.contains("..") => new_blob(),
+        DiffSource::Working | DiffSource::Ref(_) => read_worktree_file(current_path(file)),
+        DiffSource::Cached => git_show(&format!(":{}", current_path(file))).or_else(new_blob),
+        DiffSource::Revs(_, _) => new_blob(),
+        DiffSource::Patch(_) => None,
     }
 }
 
-fn reconstruct_before_from_hunks(file: &DiffFile) -> String {
-    let mut out = String::new();
-    for hunk in &file.hunks {
-        for l in &hunk.lines {
-            match l {
-                HunkLine::Context(s) | HunkLine::Del(s) => {
-                    out.push_str(s);
-                    out.push('\n');
-                }
+const PARTIAL_PREVIEW: &str = "source unavailable, showing hunks only";
 
-                HunkLine::Combined(_, s) => {
-                    out.push_str(s);
-                    out.push('\n');
+fn full_sides(file: &DiffFile, spec: &DiffSpec) -> Option<(String, String)> {
+    match &file.change {
+        crate::diff::FileChange::Added => {
+            let after = fetch_after_source(file, spec)
+                .or_else(|| reconstruct_after_from_hunks("", file).ok())?;
+            Some((String::new(), after))
+        }
+        crate::diff::FileChange::Deleted => Some((fetch_before_blob(file)?, String::new())),
+        _ if file.hunks.is_empty() => {
+            let content = fetch_after_source(file, spec)
+                .or_else(|| blob(file.new_blob_sha.as_deref()))
+                .or_else(|| fetch_before_blob(file))
+                .unwrap_or_default();
+            Some((content.clone(), content))
+        }
+        _ => {
+            let before = fetch_before_blob(file)?;
+            let after = match fetch_after_source(file, spec) {
+                Some(after) => after,
+                None => reconstruct_after_from_hunks(&before, file).ok()?,
+            };
+            Some((before, after))
+        }
+    }
+}
+
+fn fragment_sides(file: &DiffFile) -> (String, Vec<bool>, String, Vec<bool>) {
+    let mut before: Vec<String> = Vec::new();
+    let mut after: Vec<String> = Vec::new();
+    let mut del_flags = Vec::new();
+    let mut add_flags = Vec::new();
+    for (hi, hunk) in file.hunks.iter().enumerate() {
+        if hi > 0 {
+            before.push("⋯".to_string());
+            del_flags.push(false);
+            after.push("⋯".to_string());
+            add_flags.push(false);
+        }
+        for line in &hunk.lines {
+            match line {
+                HunkLine::Context(s) | HunkLine::Combined(_, s) => {
+                    before.push(s.clone());
+                    del_flags.push(false);
+                    after.push(s.clone());
+                    add_flags.push(false);
                 }
-                _ => {}
+                HunkLine::Del(s) => {
+                    before.push(s.clone());
+                    del_flags.push(true);
+                }
+                HunkLine::Add(s) => {
+                    after.push(s.clone());
+                    add_flags.push(true);
+                }
+                HunkLine::WordDiff(segments) => {
+                    use crate::diff::{word_diff_side_text, WordDiffKind};
+                    let (added, deleted) = crate::diff::word_diff_change_counts(segments);
+                    before.push(word_diff_side_text(segments, WordDiffKind::Del));
+                    del_flags.push(deleted > 0);
+                    after.push(word_diff_side_text(segments, WordDiffKind::Add));
+                    add_flags.push(added > 0);
+                }
+                HunkLine::NoNewline => {}
             }
         }
     }
-    out
+    (before.join("\n"), del_flags, after.join("\n"), add_flags)
 }
 
 pub(crate) fn reconstruct_after_from_hunks(
@@ -115,8 +147,22 @@ pub(crate) fn reconstruct_after_from_hunks(
     let mut hunks: Vec<&Hunk> = file.hunks.iter().collect();
     hunks.sort_by_key(|h| h.header.old_start);
 
+    let expect = |cursor: usize, s: &str| -> Result<(), String> {
+        match before_lines.get(cursor) {
+            Some(line) if *line == s => Ok(()),
+            _ => Err(format!(
+                "hunk does not match the source at line {}",
+                cursor + 1
+            )),
+        }
+    };
+
     for hunk in &hunks {
-        let hunk_old_start = hunk.header.old_start.saturating_sub(1) as usize;
+        let hunk_old_start = if hunk.header.old_count == 0 {
+            hunk.header.old_start as usize
+        } else {
+            hunk.header.old_start.saturating_sub(1) as usize
+        };
         if hunk_old_start > before_lines.len() {
             return Err(format!(
                 "hunk start {} past before EOF ({} lines)",
@@ -131,10 +177,12 @@ pub(crate) fn reconstruct_after_from_hunks(
         for hl in &hunk.lines {
             match hl {
                 HunkLine::Context(s) => {
+                    expect(cursor, s)?;
                     out_lines.push(s.clone());
                     cursor += 1;
                 }
-                HunkLine::Del(_) => {
+                HunkLine::Del(s) => {
+                    expect(cursor, s)?;
                     cursor += 1;
                 }
                 HunkLine::Add(s) => {
@@ -146,16 +194,16 @@ pub(crate) fn reconstruct_after_from_hunks(
                     cursor += 1;
                 }
                 HunkLine::WordDiff(segments) => {
-                    let mut rebuilt = String::new();
-                    for seg in segments {
-                        match seg.kind {
-                            crate::diff::WordDiffKind::Common | crate::diff::WordDiffKind::Add => {
-                                rebuilt.push_str(&seg.text);
-                            }
-                            crate::diff::WordDiffKind::Del => {}
-                        }
+                    let (uses_old, uses_new) = crate::diff::word_diff_sides(segments);
+                    if uses_new {
+                        out_lines.push(crate::diff::word_diff_side_text(
+                            segments,
+                            crate::diff::WordDiffKind::Add,
+                        ));
                     }
-                    out_lines.push(rebuilt);
+                    if uses_old {
+                        cursor += 1;
+                    }
                 }
             }
         }
@@ -260,11 +308,13 @@ fn render_side(
             (' ', None)
         };
 
-        let line_for_syntect = format!("{src_line}\n");
+        let (mut line_for_syntect, _) = crate::render::display_text(src_line, 0);
+        line_for_syntect.push('\n');
+        let display_line = &line_for_syntect[..line_for_syntect.len() - 1];
 
         let ranges = hl
             .highlight_line(&line_for_syntect, ss)
-            .unwrap_or_else(|_| vec![(syntect::highlighting::Style::default(), src_line)]);
+            .unwrap_or_else(|_| vec![(syntect::highlighting::Style::default(), display_line)]);
 
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(ranges.len() + 4);
 
@@ -324,58 +374,79 @@ pub(crate) fn build_preview_pair(
     ss: &SyntaxSet,
     theme_syntect: &SyntectTheme,
 ) -> PreviewPair {
-    let before_raw = fetch_before(file, spec);
-    let (after_raw, after_error) = fetch_after(file, spec);
-    let (del_flags, add_flags) = compute_diff_flags(file);
-    let syntax = resolve_file_syntax(file, ss);
-    let before_lines = render_side(&before_raw, &del_flags, true, ss, theme_syntect, syntax);
-    let after_lines = render_side(&after_raw, &add_flags, false, ss, theme_syntect, syntax);
+    if file.is_binary() {
+        let note = preview_empty_side_note(" binary content not shown");
+        return PreviewPair {
+            before_lines: note.clone(),
+            after_lines: note,
+            before_is_note: true,
+            after_is_note: true,
+            after_error: None,
+            first_change_row: 0,
+        };
+    }
 
+    let syntax = resolve_file_syntax(file, ss);
+    let (full, after_error) = match file.change {
+        crate::diff::FileChange::Submodule => (None, None),
+        _ => {
+            let full = full_sides(file, spec);
+            let after_error = full.is_none().then(|| PARTIAL_PREVIEW.to_string());
+            (full, after_error)
+        }
+    };
+    let (before_raw, del_flags, after_raw, add_flags) = match full {
+        Some((before, after)) => {
+            let (del_flags, add_flags) = compute_diff_flags(file);
+            (before, del_flags, after, add_flags)
+        }
+        None => fragment_sides(file),
+    };
+    let first_change_row = del_flags
+        .iter()
+        .position(|&hit| hit)
+        .into_iter()
+        .chain(add_flags.iter().position(|&hit| hit))
+        .min()
+        .unwrap_or(0);
+    let render = |raw: &str, flags: &[bool], is_del: bool| {
+        render_side(raw, flags, is_del, ss, theme_syntect, syntax)
+    };
+
+    let meta_only_note = match &file.change {
+        crate::diff::FileChange::ModeOnly { old_mode, new_mode } if file.hunks.is_empty() => Some(
+            format!(" {}", crate::render::mode_change_label(old_mode, new_mode)),
+        ),
+        crate::diff::FileChange::Renamed { from, .. } if file.hunks.is_empty() => {
+            Some(format!(" renamed from {from}"))
+        }
+        _ => None,
+    };
     let (before_lines, after_lines, before_is_note, after_is_note) = match &file.change {
         crate::diff::FileChange::Added => (
             preview_empty_side_note(" new file"),
-            after_lines,
+            render(&after_raw, &add_flags, false),
             true,
             false,
         ),
         crate::diff::FileChange::Deleted => (
-            before_lines,
+            render(&before_raw, &del_flags, true),
             preview_empty_side_note(" file deleted"),
             false,
             true,
         ),
-        crate::diff::FileChange::ModeOnly { old_mode, new_mode } => {
-            if !file.hunks.is_empty() {
-                (before_lines, after_lines, false, false)
-            } else {
-                let text = format!(" {}", crate::render::mode_change_label(old_mode, new_mode));
-                let before_lines = if before_raw.is_empty() {
-                    after_lines.clone()
-                } else {
-                    before_lines
-                };
-                (before_lines, preview_empty_side_note(&text), false, true)
-            }
-        }
-        crate::diff::FileChange::Renamed { from, .. } => {
-            if !file.hunks.is_empty() {
-                (before_lines, after_lines, false, false)
-            } else {
-                let text = format!(" renamed from {from}");
-                let before_lines = if before_raw.is_empty() {
-                    after_lines.clone()
-                } else {
-                    before_lines
-                };
-                (before_lines, preview_empty_side_note(&text), false, true)
-            }
-        }
-        crate::diff::FileChange::Binary => {
-            let note = preview_empty_side_note(" binary content not shown");
-            (note.clone(), note, true, true)
-        }
-        crate::diff::FileChange::Submodule => (before_lines, after_lines, false, false),
-        _ => (before_lines, after_lines, false, false),
+        _ if meta_only_note.is_some() => (
+            render(&after_raw, &[], false),
+            preview_empty_side_note(meta_only_note.as_deref().unwrap_or_default()),
+            false,
+            true,
+        ),
+        _ => (
+            render(&before_raw, &del_flags, true),
+            render(&after_raw, &add_flags, false),
+            false,
+            false,
+        ),
     };
     PreviewPair {
         before_lines,
@@ -383,6 +454,7 @@ pub(crate) fn build_preview_pair(
         before_is_note,
         after_is_note,
         after_error,
+        first_change_row,
     }
 }
 

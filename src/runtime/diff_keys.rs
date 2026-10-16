@@ -12,7 +12,7 @@ pub(super) fn handle_diff_keys(
 ) -> bool {
     match key.code {
         KeyCode::Char('n') => {
-            if app.has_active_search() {
+            if app.has_active_search() && !app.is_diff_preview_visible() {
                 app.next_match();
                 return true;
             }
@@ -25,7 +25,7 @@ pub(super) fn handle_diff_keys(
             true
         }
         KeyCode::Char('N') => {
-            if app.has_active_search() {
+            if app.has_active_search() && !app.is_diff_preview_visible() {
                 app.prev_match();
                 return true;
             }
@@ -91,7 +91,7 @@ pub(super) fn handle_diff_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{AppMode, DiffSpec};
+    use crate::app::{AppMode, DiffSource, DiffSpec};
     use crate::diff::parse_unified_diff;
     use ratatui::text::Line;
     use syntect::highlighting::ThemeSet;
@@ -362,15 +362,21 @@ mod tests {
         app.set_search_query("hello");
         app.run_search();
         assert!(app.has_active_search());
-        assert!(app.search_matches().len() >= 2);
-        let file_before = app.diff().unwrap().current_file_idx;
+        let matches = app.search_matches().to_vec();
+        assert!(matches.len() >= 2);
+        assert_eq!(app.diff().unwrap().current_file_idx, 0);
 
         let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         assert!(handle_diff_keys(&mut app, &key, &ss, &themes));
         assert_eq!(
+            app.scroll(),
+            matches[1] - 2,
+            "n steps the match cursor, leaving room for the sticky header"
+        );
+        assert_eq!(
             app.diff().unwrap().current_file_idx,
-            file_before,
-            "n with active search must step the match cursor, not the file cursor"
+            1,
+            "the active file follows the match"
         );
     }
 
@@ -398,6 +404,51 @@ mod tests {
     }
 
     #[test]
+    fn n_and_shift_n_reset_preview_scroll_to_file_start() {
+        let mut src = String::new();
+        for path in ["a.txt", "b.txt"] {
+            src.push_str(&format!(
+                "diff --git a/{path} b/{path}\n\
+                 --- a/{path}\n+++ b/{path}\n\
+                 @@ -1,20 +1,20 @@\n"
+            ));
+            for line in 0..19 {
+                src.push_str(&format!(" context {line}\n"));
+            }
+            src.push_str("-old\n+new\n");
+        }
+
+        let mut app = make_app();
+        app.content_area = ratatui::layout::Rect::new(0, 0, 80, 10);
+        let (ss, theme, themes) = syntect_defaults();
+        app.set_source_for_test(src.clone());
+        app.install_diff(
+            parse_unified_diff(&src),
+            DiffSpec {
+                source: DiffSource::Patch("change.patch".into()),
+                ..DiffSpec::default()
+            },
+            std::sync::Arc::new(ss.clone()),
+            std::sync::Arc::new(theme),
+        );
+
+        let open_preview = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert!(handle_diff_keys(&mut app, &open_preview, &ss, &themes));
+        assert!(app.scroll() > 0, "preview starts below the top of the file");
+
+        let next = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert!(handle_diff_keys(&mut app, &next, &ss, &themes));
+        assert_eq!(app.diff().unwrap().current_file_idx, 1);
+        assert_eq!(app.scroll(), 0);
+
+        app.scroll_down(5);
+        let previous = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT);
+        assert!(handle_diff_keys(&mut app, &previous, &ss, &themes));
+        assert_eq!(app.diff().unwrap().current_file_idx, 0);
+        assert_eq!(app.scroll(), 0);
+    }
+
+    #[test]
     fn p_guard_gates_open_path_popup_by_mode() {
         let src = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
         let files = parse_unified_diff(src);
@@ -415,5 +466,23 @@ mod tests {
             app.open_path_popup();
         }
         assert!(!app.is_path_popup_open());
+    }
+
+    #[test]
+    fn v_is_ignored_while_the_preview_is_open() {
+        let src = "diff --git a/x.md b/x.md\n--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-old\n+new\n";
+        let mut app = make_app();
+        let (ss, theme, themes) = syntect_defaults();
+        app.install_diff(
+            parse_unified_diff(src),
+            DiffSpec::default(),
+            std::sync::Arc::new(ss.clone()),
+            std::sync::Arc::new(theme.clone()),
+        );
+        assert!(app.diff_toggle_preview(&ss, &theme));
+
+        let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        assert!(handle_diff_keys(&mut app, &key, &ss, &themes));
+        assert_eq!(app.diff().unwrap().layout, crate::diff::DiffLayout::Unified);
     }
 }

@@ -65,22 +65,25 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let active_from_scroll = app.diff_current_file_from_scroll();
 
-    let (rows, active_idx, scroll) = {
+    let (rows, active_idx, total_rows) = {
         let Some(state) = app.diff() else {
             return;
         };
+        let first = state.tree_scroll.min(state.files.len());
         let rows: Vec<(usize, String, (char, ratatui::style::Color))> = state
             .files
             .iter()
             .enumerate()
+            .skip(first)
+            .take(list_area.height as usize)
             .map(|(i, f)| (i, display_path(f), change_tag(&f.change, &theme)))
             .collect();
         let active = active_from_scroll.unwrap_or(state.tree_active_idx);
-        (rows, active, state.tree_scroll)
+        (rows, active, state.files.len())
     };
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.len().max(1));
-    if rows.is_empty() {
+    if total_rows == 0 {
         lines.push(Line::from(Span::styled(
             "  (no files)".to_string(),
             Style::default()
@@ -111,7 +114,6 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     f.render_widget(
         Paragraph::new(lines)
-            .scroll((scroll as u16, 0))
             .style(Style::default().bg(theme.ui.toc_bg))
             .block(
                 Block::default()
@@ -127,7 +129,10 @@ pub(super) fn render_diff_tree_panel(f: &mut Frame, app: &mut App, area: Rect) {
             f.render_widget(
                 Paragraph::new("∙").style(Style::default().fg(border_color)),
                 Rect {
-                    x: list_area.x + list_area.width - 1,
+                    x: list_area
+                        .x
+                        .saturating_add(list_area.width)
+                        .saturating_sub(1),
                     y: row,
                     width: 1,
                     height: 1,
@@ -199,7 +204,7 @@ fn build_tree_line(
         .add_modifier(Modifier::BOLD);
     let spacer_style = Style::default().bg(row_bg);
 
-    let used = reserved + display_path.chars().count();
+    let used = reserved + crate::markdown::display_width(&display_path);
     let pad_cols = inner_width.saturating_sub(used);
     let pad = " ".repeat(pad_cols);
 
@@ -242,15 +247,36 @@ fn display_path(file: &DiffFile) -> String {
 }
 
 fn truncate_head(path: &str, max: usize) -> String {
-    let count = path.chars().count();
-    if count <= max {
+    use unicode_segmentation::UnicodeSegmentation;
+    if crate::markdown::display_width(path) <= max {
         return path.to_string();
     }
     if max <= 1 {
         return "…".to_string();
     }
-    let keep = max - 1;
-    let skip = count - keep;
-    let tail: String = path.chars().skip(skip).collect();
-    format!("…{tail}")
+    let mut tail_start = path.len();
+    let mut width = 0;
+    for (idx, grapheme) in path.grapheme_indices(true).rev() {
+        let w = crate::markdown::width::rendered_cluster_width(grapheme);
+        if width + w > max - 1 {
+            break;
+        }
+        width += w;
+        tail_start = idx;
+    }
+    format!("…{}", &path[tail_start..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_head;
+
+    #[test]
+    fn truncate_head_keeps_whole_graphemes_within_the_width() {
+        let path = format!("dir/{}.txt", "❤️".repeat(8));
+        let cut = truncate_head(&path, 11);
+        assert!(crate::markdown::display_width(&cut) <= 11, "{cut:?}");
+        let combining = truncate_head("dire\u{301}e\u{301}.txt", 7);
+        assert!(!combining.starts_with("…\u{301}"), "{combining:?}");
+    }
 }

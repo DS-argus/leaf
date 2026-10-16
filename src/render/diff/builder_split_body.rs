@@ -21,11 +21,78 @@ pub(super) fn build_split_body_line(
     hl_right: Option<&mut HighlightLines<'_>>,
     ss: &SyntaxSet,
 ) -> Line<'static> {
+    build_split_body_line_masked(theme, left, right, (hl_left, hl_right), ss, (None, None))
+}
+
+pub(super) fn build_split_body_line_masked<'l, 'r>(
+    theme: &DiffTheme,
+    left: SplitSide<'_>,
+    right: SplitSide<'_>,
+    hls: (
+        Option<&mut HighlightLines<'l>>,
+        Option<&mut HighlightLines<'r>>,
+    ),
+    ss: &SyntaxSet,
+    masks: (Option<&[bool]>, Option<&[bool]>),
+) -> Line<'static> {
     let border_style = Style::default().fg(theme.frame_fg);
     let mut spans: Vec<Span<'static>> = vec![Span::styled("│", border_style)];
-    build_split_half_spans(&mut spans, theme, &left, hl_left, ss);
+    build_split_half_spans(&mut spans, theme, &left, hls.0, ss, masks.0);
     spans.push(Span::styled("│", border_style));
-    build_split_half_spans(&mut spans, theme, &right, hl_right, ss);
+    build_split_half_spans(&mut spans, theme, &right, hls.1, ss, masks.1);
+    Line::from(spans)
+}
+
+pub(super) fn build_split_word_diff_line(
+    theme: &DiffTheme,
+    segments: &[crate::diff::WordDiffSegment],
+) -> Line<'static> {
+    use crate::diff::WordDiffKind;
+    let border_style = Style::default().fg(theme.frame_fg);
+    let mut spans: Vec<Span<'static>> = vec![Span::styled("│", border_style)];
+    for (side_kind, sigil, sigil_style, word_style) in [
+        (
+            WordDiffKind::Del,
+            '-',
+            Style::default().fg(theme.del_fg).bg(theme.del_bg),
+            Style::default()
+                .fg(theme.del_fg)
+                .bg(theme.intra_del)
+                .add_modifier(Modifier::CROSSED_OUT),
+        ),
+        (
+            WordDiffKind::Add,
+            '+',
+            Style::default().fg(theme.add_fg).bg(theme.add_bg),
+            Style::default().fg(theme.add_fg).bg(theme.intra_add),
+        ),
+    ] {
+        if side_kind == WordDiffKind::Add {
+            spans.push(Span::styled("│", border_style));
+        }
+        let changed = segments.iter().any(|s| s.kind == side_kind);
+        if changed {
+            spans.push(Span::styled(sigil.to_string(), sigil_style));
+            let sep_style = sigil_style
+                .bg
+                .map_or(Style::default(), |bg| Style::default().bg(bg));
+            spans.push(Span::styled(" ", sep_style));
+        } else {
+            spans.push(Span::raw(" "));
+            spans.push(Span::raw(" "));
+        }
+        let side = expand_segments(segments, |kind| {
+            *kind == WordDiffKind::Common || *kind == side_kind
+        });
+        for (kind, text) in side {
+            let style = if *kind == WordDiffKind::Common {
+                Style::default().fg(theme.context_fg)
+            } else {
+                word_style
+            };
+            spans.push(Span::styled(text, style));
+        }
+    }
     Line::from(spans)
 }
 
@@ -35,6 +102,7 @@ pub(super) fn build_split_half_spans(
     side: &SplitSide<'_>,
     hl: Option<&mut HighlightLines<'_>>,
     ss: &SyntaxSet,
+    mask: Option<&[bool]>,
 ) {
     let (sigil_char, sigil_style, sep_style, body_bg, text_fg, text) = match side {
         SplitSide::Context(s) => (
@@ -132,18 +200,29 @@ pub(super) fn build_split_half_spans(
         }
         content_spans.push(Span::styled(String::new(), style));
     }
-    spans.extend(content_spans);
+    let intra_bg = match side {
+        SplitSide::Del(_) => Some(theme.intra_del),
+        SplitSide::Add(_) => Some(theme.intra_add),
+        _ => None,
+    };
+    match (mask, intra_bg) {
+        (Some(mask), Some(bg)) if mask.len() == text.chars().count() => {
+            spans.extend(apply_intra_mask(content_spans, mask, bg));
+        }
+        _ => spans.extend(content_spans),
+    }
 }
 
 pub(super) enum SplitPair<'a> {
     Context(&'a str),
-    Change(&'a str, &'a str),
+    Change(&'a str, &'a str, usize, usize),
     DelOnly(&'a str),
     AddOnly(&'a str),
     NoNewlineLeft,
     NoNewlineRight,
     NoNewlineBoth,
     Combined(&'a str, &'a str),
+    WordDiff(&'a [crate::diff::WordDiffSegment]),
 }
 
 pub(super) fn pair_hunk_lines(lines: &[HunkLine]) -> Vec<SplitPair<'_>> {
@@ -166,6 +245,7 @@ pub(super) fn pair_hunk_lines(lines: &[HunkLine]) -> Vec<SplitPair<'_>> {
             HunkLine::NoNewline => {
                 let pair = match i.checked_sub(1).and_then(|j| lines.get(j)) {
                     Some(HunkLine::Add(_)) => SplitPair::NoNewlineRight,
+                    Some(HunkLine::Context(_)) => SplitPair::NoNewlineBoth,
                     _ => SplitPair::NoNewlineLeft,
                 };
                 out.push(pair);
@@ -196,7 +276,7 @@ pub(super) fn pair_hunk_lines(lines: &[HunkLine]) -> Vec<SplitPair<'_>> {
                         HunkLine::Add(s) => s.as_str(),
                         _ => "",
                     };
-                    out.push(SplitPair::Change(d, a));
+                    out.push(SplitPair::Change(d, a, del_start + k, add_start + k));
                 }
                 for k in paired..del_count {
                     let d = match &lines[del_start + k] {
@@ -243,8 +323,8 @@ pub(super) fn pair_hunk_lines(lines: &[HunkLine]) -> Vec<SplitPair<'_>> {
                 out.push(SplitPair::Combined(prefix.as_str(), content.as_str()));
                 i += 1;
             }
-            HunkLine::WordDiff(_segments) => {
-                out.push(SplitPair::Context(""));
+            HunkLine::WordDiff(segments) => {
+                out.push(SplitPair::WordDiff(segments));
                 i += 1;
             }
         }

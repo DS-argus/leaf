@@ -1,9 +1,9 @@
 use super::builder_common::{
-    assert_sidecars_parallel, build_combined_half, combined_row_bg, SYNTECT_SKIP_HUNK_LINES,
+    assert_sidecars_parallel, build_combined_half, combined_row_bg, take_line_numbers,
+    SideHighlighters, SYNTECT_SKIP_HUNK_LINES,
 };
 use super::*;
 use crate::{
-    app::HunkRange,
     diff::{
         is_mode_change_with_hunks, is_rename_with_hunks, DiffFile, FileChange, HunkLine,
         NO_NEWLINE_MARKER,
@@ -15,15 +15,12 @@ use ratatui::{
     text::{Line, Span},
 };
 use syntect::{
-    easy::HighlightLines,
     highlighting::Theme as SyntectTheme,
     parsing::{SyntaxReference, SyntaxSet},
 };
 
 pub(crate) struct BuiltDiffLines {
     pub(crate) lines: Vec<Line<'static>>,
-    pub(crate) hunk_ranges: Vec<HunkRange>,
-    pub(crate) line_owner: Vec<Option<(usize, usize)>>,
     pub(crate) line_old_num: Vec<u32>,
     pub(crate) line_new_num: Vec<u32>,
     pub(crate) file_header_status: Vec<Option<Vec<Span<'static>>>>,
@@ -33,17 +30,25 @@ pub(crate) struct BuiltDiffLines {
     pub(crate) meta_only_bottom_rows: Vec<usize>,
 }
 
+#[cfg(test)]
 pub(crate) fn build_diff_lines(
     files: &[DiffFile],
     ss: &SyntaxSet,
     theme_syntect: &SyntectTheme,
 ) -> BuiltDiffLines {
+    build_diff_lines_with(files, ss, theme_syntect, true)
+}
+
+pub(crate) fn build_diff_lines_with(
+    files: &[DiffFile],
+    ss: &SyntaxSet,
+    theme_syntect: &SyntectTheme,
+    highlight: bool,
+) -> BuiltDiffLines {
     let theme = app_theme();
     let diff = &theme.diff;
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut hunk_ranges: Vec<HunkRange> = Vec::new();
-    let mut line_owner: Vec<Option<(usize, usize)>> = Vec::new();
     let mut line_old_num: Vec<u32> = Vec::new();
     let mut line_new_num: Vec<u32> = Vec::new();
     let mut file_header_status: Vec<Option<Vec<Span<'static>>>> = Vec::new();
@@ -53,17 +58,14 @@ pub(crate) fn build_diff_lines(
     let mut meta_only_bottom_rows: Vec<usize> = Vec::new();
 
     let push = |lines: &mut Vec<Line<'static>>,
-                line_owner: &mut Vec<Option<(usize, usize)>>,
                 line_old_num: &mut Vec<u32>,
                 line_new_num: &mut Vec<u32>,
                 file_header_status: &mut Vec<Option<Vec<Span<'static>>>>,
                 line: Line<'static>,
-                owner: Option<(usize, usize)>,
                 old: u32,
                 new: u32,
                 status: Option<Vec<Span<'static>>>| {
         lines.push(line);
-        line_owner.push(owner);
         line_old_num.push(old);
         line_new_num.push(new);
         file_header_status.push(status);
@@ -72,7 +74,6 @@ pub(crate) fn build_diff_lines(
     if files.is_empty() {
         push(
             &mut lines,
-            &mut line_owner,
             &mut line_old_num,
             &mut line_new_num,
             &mut file_header_status,
@@ -80,7 +81,6 @@ pub(crate) fn build_diff_lines(
                 "No changes to display".to_string(),
                 Style::default().fg(diff.context_fg),
             )),
-            None,
             0,
             0,
             None,
@@ -88,8 +88,6 @@ pub(crate) fn build_diff_lines(
         file_owner.push(None);
         return BuiltDiffLines {
             lines,
-            hunk_ranges,
-            line_owner,
             line_old_num,
             line_new_num,
             file_header_status,
@@ -101,8 +99,13 @@ pub(crate) fn build_diff_lines(
     }
 
     for (fi, file) in files.iter().enumerate() {
-        let syntax: Option<&SyntaxReference> = resolve_file_syntax(file, ss);
-        let mut hl = syntax.map(|s| HighlightLines::new(s, theme_syntect));
+        let syntax: Option<&SyntaxReference> =
+            highlight.then(|| resolve_file_syntax(file, ss)).flatten();
+        let mut hls = SideHighlighters::new(syntax, theme_syntect);
+        let has_del = file
+            .hunks
+            .iter()
+            .any(|h| h.lines.iter().any(|l| matches!(l, HunkLine::Del(_))));
 
         let (file_add, file_del) = count_file_changes(file);
         let (top_line, status_spans) = build_file_top_frame_parts(file, diff, file_add, file_del);
@@ -110,24 +113,20 @@ pub(crate) fn build_diff_lines(
         file_top_idx.push(top_line_idx);
         push(
             &mut lines,
-            &mut line_owner,
             &mut line_old_num,
             &mut line_new_num,
             &mut file_header_status,
             top_line,
-            None,
             0,
             0,
             Some(status_spans),
         );
         push(
             &mut lines,
-            &mut line_owner,
             &mut line_old_num,
             &mut line_new_num,
             &mut file_header_status,
             build_border_blank(diff),
-            None,
             0,
             0,
             None,
@@ -143,39 +142,33 @@ pub(crate) fn build_diff_lines(
             };
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 build_meta_hunk_header(diff, meta_label, meta_add, meta_del),
-                None,
                 0,
                 0,
                 None,
             );
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 build_border_blank(diff),
-                None,
                 0,
                 0,
                 None,
             );
         }
         match &file.change {
-            FileChange::Binary => {
+            _ if file.is_binary() => {
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
                     build_bordered_note(diff, " binary content not shown".to_string()),
-                    None,
                     0,
                     0,
                     None,
@@ -184,7 +177,6 @@ pub(crate) fn build_diff_lines(
             FileChange::ModeOnly { old_mode, new_mode } => {
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
@@ -192,7 +184,6 @@ pub(crate) fn build_diff_lines(
                         diff,
                         format!(" {}", mode_change_label(old_mode, new_mode)),
                     ),
-                    None,
                     0,
                     0,
                     None,
@@ -201,12 +192,10 @@ pub(crate) fn build_diff_lines(
             FileChange::Renamed { from, .. } => {
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
                     build_bordered_note(diff, format!(" renamed from {from}")),
-                    None,
                     0,
                     0,
                     None,
@@ -218,12 +207,10 @@ pub(crate) fn build_diff_lines(
         if combined_meta_hunks {
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 build_border_blank(diff),
-                None,
                 0,
                 0,
                 None,
@@ -235,55 +222,48 @@ pub(crate) fn build_diff_lines(
             let use_syntect = hunk.lines.len() < SYNTECT_SKIP_HUNK_LINES;
             let (hunk_add, hunk_del) = count_hunk_changes(hunk);
             let header_line = build_hunk_header(hunk, diff, hunk_add, hunk_del, &file.change);
-            let header_line_idx = lines.len();
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 header_line,
-                Some((fi, hi)),
                 0,
                 0,
                 None,
             );
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 build_border_blank(diff),
-                Some((fi, hi)),
                 0,
                 0,
                 None,
             );
-            let body_start = lines.len();
             let mut cur_old = hunk.header.old_start;
             let mut cur_new = hunk.header.new_start;
 
-            let skip_leading = hunk
-                .lines
+            let hunk_lines = prepare_hunk_lines(&hunk.lines);
+            let skip_leading = hunk_lines
                 .iter()
                 .take_while(|hl| matches!(hl, HunkLine::Context(s) if s.is_empty()))
                 .count();
 
-            let trailing_skip = hunk
-                .lines
+            let trailing_skip = hunk_lines
                 .iter()
                 .rev()
-                .take(hunk.lines.len().saturating_sub(skip_leading))
+                .take(hunk_lines.len().saturating_sub(skip_leading))
                 .take_while(|hl| matches!(hl, HunkLine::Context(s) if s.is_empty()))
                 .count();
             for _ in 0..skip_leading {
                 cur_old = cur_old.saturating_add(1);
                 cur_new = cur_new.saturating_add(1);
             }
-            let body_end_idx = hunk.lines.len() - trailing_skip;
+            let body_end_idx = hunk_lines.len() - trailing_skip;
 
-            let slice = &hunk.lines[skip_leading..body_end_idx];
+            let slice = &hunk_lines[skip_leading..body_end_idx];
             let intra_masks: Vec<IntraMaskPair> = compute_intra_masks(slice);
             for (li, hunk_line) in slice.iter().enumerate() {
                 if matches!(hunk_line, HunkLine::NoNewline)
@@ -295,6 +275,9 @@ pub(crate) fn build_diff_lines(
                 }
                 let (line, old_num, new_num) = match hunk_line {
                     HunkLine::Context(s) => {
+                        if use_syntect && has_del {
+                            hls.advance_old(s, ss);
+                        }
                         let l = build_body_line(
                             &BodyLineStyle {
                                 theme: diff,
@@ -303,7 +286,7 @@ pub(crate) fn build_diff_lines(
                                 intra_bg: None,
                             },
                             s,
-                            if use_syntect { hl.as_mut() } else { None },
+                            if use_syntect { hls.new_side() } else { None },
                             ss,
                             None,
                         );
@@ -323,7 +306,7 @@ pub(crate) fn build_diff_lines(
                                 intra_bg: Some(diff.intra_add),
                             },
                             s,
-                            if use_syntect { hl.as_mut() } else { None },
+                            if use_syntect { hls.new_side() } else { None },
                             ss,
                             mask,
                         );
@@ -341,7 +324,7 @@ pub(crate) fn build_diff_lines(
                                 intra_bg: Some(diff.intra_del),
                             },
                             s,
-                            if use_syntect { hl.as_mut() } else { None },
+                            if use_syntect { hls.old_side() } else { None },
                             ss,
                             mask,
                         );
@@ -371,10 +354,26 @@ pub(crate) fn build_diff_lines(
                         (l, 0, 0)
                     }
                     HunkLine::WordDiff(segments) => {
-                        let mut spans: Vec<Span<'static>> =
-                            vec![build_border_span(diff), Span::raw(" ")];
-                        for seg in segments {
-                            let style = match seg.kind {
+                        let (in_old, in_new) = hunk_line.sides();
+                        let (sigil, sigil_style) = match (in_old, in_new) {
+                            (true, false) => {
+                                ("-", Style::default().fg(diff.del_fg).bg(diff.del_bg))
+                            }
+                            (false, true) => {
+                                ("+", Style::default().fg(diff.add_fg).bg(diff.add_bg))
+                            }
+                            _ => (" ", Style::default()),
+                        };
+                        let sep_style = sigil_style
+                            .bg
+                            .map_or(Style::default(), |bg| Style::default().bg(bg));
+                        let mut spans: Vec<Span<'static>> = vec![
+                            build_border_span_bare(diff),
+                            Span::styled(sigil, sigil_style),
+                            Span::styled(" ", sep_style),
+                        ];
+                        for (kind, text) in expand_segments(segments, |_| true) {
+                            let style = match kind {
                                 crate::diff::WordDiffKind::Common => {
                                     Style::default().fg(diff.context_fg)
                                 }
@@ -386,47 +385,36 @@ pub(crate) fn build_diff_lines(
                                     .bg(diff.del_bg)
                                     .add_modifier(Modifier::CROSSED_OUT),
                             };
-                            spans.push(Span::styled(seg.text.clone(), style));
+                            spans.push(Span::styled(text, style));
                         }
                         let l = Line::from(spans);
-                        let o = cur_old;
-                        let n = cur_new;
-                        cur_old = cur_old.saturating_add(1);
-                        cur_new = cur_new.saturating_add(1);
+                        let (o, n) =
+                            take_line_numbers((in_old, in_new), &mut cur_old, &mut cur_new);
                         (l, o, n)
                     }
                 };
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
                     line,
-                    Some((fi, hi)),
                     old_num,
                     new_num,
                     None,
                 );
             }
-            let body_end = lines.len();
-            hunk_ranges.push(HunkRange {
-                file_idx: fi,
-                hunk_idx: hi,
-                header_line: header_line_idx,
-                body_start,
-                body_end,
-            });
+            if !use_syntect {
+                hls.reset();
+            }
 
             if hi + 1 < hunk_count {
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
                     build_border_blank(diff),
-                    None,
                     0,
                     0,
                     None,
@@ -438,12 +426,10 @@ pub(crate) fn build_diff_lines(
             if !nested.is_empty() {
                 push(
                     &mut lines,
-                    &mut line_owner,
                     &mut line_old_num,
                     &mut line_new_num,
                     &mut file_header_status,
                     build_bordered_note(diff, "  submodule contents".to_string()),
-                    None,
                     0,
                     0,
                     None,
@@ -456,12 +442,10 @@ pub(crate) fn build_diff_lines(
                     };
                     push(
                         &mut lines,
-                        &mut line_owner,
                         &mut line_old_num,
                         &mut line_new_num,
                         &mut file_header_status,
                         build_bordered_note(diff, format!("    · {path}")),
-                        None,
                         0,
                         0,
                         None,
@@ -469,12 +453,10 @@ pub(crate) fn build_diff_lines(
                     if nf.nested_submodule_diff.is_some() {
                         push(
                             &mut lines,
-                            &mut line_owner,
                             &mut line_old_num,
                             &mut line_new_num,
                             &mut file_header_status,
                             build_bordered_note(diff, "      (nested submodule)".to_string()),
-                            None,
                             0,
                             0,
                             None,
@@ -483,12 +465,10 @@ pub(crate) fn build_diff_lines(
                     for h in &nf.hunks {
                         push(
                             &mut lines,
-                            &mut line_owner,
                             &mut line_old_num,
                             &mut line_new_num,
                             &mut file_header_status,
                             build_bordered_note(diff, format!("      {}", h.header_raw)),
-                            None,
                             0,
                             0,
                             None,
@@ -504,17 +484,15 @@ pub(crate) fn build_diff_lines(
             file.change,
             FileChange::ModeOnly { .. } | FileChange::Renamed { .. }
         ) && !combined_meta_hunks;
-        if matches!(file.change, FileChange::Binary) || meta_only_without_hunks {
+        if file.is_binary() || meta_only_without_hunks {
             meta_only_bottom_rows.push(bottom_line_idx);
         }
         push(
             &mut lines,
-            &mut line_owner,
             &mut line_old_num,
             &mut line_new_num,
             &mut file_header_status,
             build_file_bottom_frame(diff),
-            None,
             0,
             0,
             None,
@@ -530,12 +508,10 @@ pub(crate) fn build_diff_lines(
         if fi + 1 < files.len() {
             push(
                 &mut lines,
-                &mut line_owner,
                 &mut line_old_num,
                 &mut line_new_num,
                 &mut file_header_status,
                 Line::from(""),
-                None,
                 0,
                 0,
                 None,
@@ -550,7 +526,6 @@ pub(crate) fn build_diff_lines(
 
     assert_sidecars_parallel!(
         lines,
-        line_owner,
         line_old_num,
         line_new_num,
         file_header_status,
@@ -559,8 +534,6 @@ pub(crate) fn build_diff_lines(
 
     BuiltDiffLines {
         lines,
-        hunk_ranges,
-        line_owner,
         line_old_num,
         line_new_num,
         file_header_status,
@@ -571,7 +544,7 @@ pub(crate) fn build_diff_lines(
     }
 }
 
-pub(super) fn count_file_changes(file: &DiffFile) -> (usize, usize) {
+pub(crate) fn count_file_changes(file: &DiffFile) -> (usize, usize) {
     let mut added = 0usize;
     let mut deleted = 0usize;
     for hunk in &file.hunks {
@@ -586,11 +559,9 @@ pub(super) fn count_hunk_changes(hunk: &crate::diff::Hunk) -> (usize, usize) {
     let mut added = 0usize;
     let mut deleted = 0usize;
     for line in &hunk.lines {
-        match line {
-            HunkLine::Add(_) => added += 1,
-            HunkLine::Del(_) => deleted += 1,
-            _ => {}
-        }
+        let (a, d) = line.change_counts();
+        added += a;
+        deleted += d;
     }
     (added, deleted)
 }

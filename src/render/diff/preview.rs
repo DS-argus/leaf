@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     app::App,
-    diff::{DiffFile, FileChange},
+    diff::DiffFile,
     theme::{app_theme, AppTheme},
 };
 use ratatui::{
@@ -58,10 +58,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
     let file = &state.files[active_idx];
     let (added, deleted) = state.file_counts(active_idx);
 
-    let meta_note = match &file.change {
-        FileChange::Binary => Some(" binary content not shown"),
-        _ => None,
-    };
+    let meta_note = file.is_binary().then_some(" binary content not shown");
     if let Some(note_text) = meta_note {
         render_preview_meta_note(
             f,
@@ -195,7 +192,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
                     spans.drain(0..2);
                 }
                 if col_inner_w > preserved_width + 1 && spans.len() > preserved_end {
-                    let total_w: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let total_w: usize = spans.iter().map(span_width).sum();
                     if total_w > col_inner_w {
                         let bg = spans.get(preserved_end).and_then(|s| s.style.bg);
                         let budget = col_inner_w - preserved_width;
@@ -209,7 +206,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
                     .and_then(|s| s.style.bg)
                     .or_else(|| spans.first().and_then(|s| s.style.bg));
                 if let Some(bg) = row_bg {
-                    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let used: usize = spans.iter().map(span_width).sum();
                     if used < col_inner_w {
                         let pad = col_inner_w - used;
                         spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
@@ -229,7 +226,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
             .map(|l| {
                 let mut spans = l.spans.clone();
                 if right_inner_w > preserved_width_r + 1 && spans.len() > 3 {
-                    let total_w: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let total_w: usize = spans.iter().map(span_width).sum();
                     if total_w > right_inner_w {
                         let bg = spans.get(3).and_then(|s| s.style.bg);
                         let budget = right_inner_w - preserved_width_r;
@@ -242,7 +239,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
                     .and_then(|s| s.style.bg)
                     .or_else(|| spans.first().and_then(|s| s.style.bg));
                 if let Some(bg) = row_bg {
-                    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                    let used: usize = spans.iter().map(span_width).sum();
                     if used < right_inner_w {
                         let pad = right_inner_w - used;
                         spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
@@ -332,11 +329,12 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
         f.render_widget(Paragraph::new(bottom_lines).style(bg_fill), bottom_area);
     }
 
-    let max_scroll = app.max_scroll();
-    #[allow(clippy::manual_checked_ops)]
-    if max_scroll > 0 {
+    if let Some(max_scroll) = std::num::NonZeroUsize::new(app.max_scroll()) {
         let (mouse_col, mouse_row) = app.mouse_position;
-        let sb_x = area.x + area.width - SCROLLBAR_WIDTH;
+        let sb_x = area
+            .x
+            .saturating_add(area.width)
+            .saturating_sub(SCROLLBAR_WIDTH);
         let on_sb_column = mouse_col >= sb_x
             && mouse_col < sb_x + SCROLLBAR_WIDTH
             && mouse_row >= area.y
@@ -359,7 +357,7 @@ pub(crate) fn render_diff_preview_panel(f: &mut Frame, app: &App, area: Rect, co
         if mouse_on_thumb || app.scrollbar_dragging {
             scrollbar = scrollbar.thumb_style(Style::default().fg(theme.ui.scrollbar_hover));
         }
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+        let mut scrollbar_state = ScrollbarState::new(max_scroll.get()).position(scroll);
         f.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }

@@ -2,7 +2,7 @@ use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-pub(super) const TAB_STOP: usize = 4;
+pub(crate) const TAB_STOP: usize = 4;
 
 pub(crate) fn line_plain_text(line: &Line<'_>) -> String {
     line.spans.iter().map(|s| s.content.as_ref()).collect()
@@ -133,7 +133,7 @@ pub(crate) fn display_width(text: &str) -> usize {
     width
 }
 
-pub(super) fn expand_tabs(text: &str, start_width: usize) -> String {
+pub(crate) fn expand_tabs(text: &str, start_width: usize) -> String {
     if !text.contains('\t') {
         return text.to_string();
     }

@@ -13,9 +13,11 @@ pub(crate) use diff::{
     apply_number_gutter, close_frame_right, compute_sticky_top_idx, truncate_unified_body_row,
     FrameDecorations,
 };
+#[cfg(test)]
+pub(crate) use diff::{build_diff_lines, build_split_lines};
 pub(crate) use diff::{
-    build_diff_lines, build_split_lines, mode_change_label, resolve_file_syntax, syntect_to_color,
-    BuiltSplitLines,
+    build_diff_lines_with, build_split_lines_with, count_file_changes, display_text,
+    mode_change_label, resolve_file_syntax, syntect_to_color, BuiltDiffLines, BuiltSplitLines,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

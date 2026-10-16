@@ -104,15 +104,6 @@ pub(crate) fn run(
         if app.poll_history_errors() {
             needs_redraw = true;
         }
-        if app.poll_pending_split_build()
-            && app.is_diff_mode()
-            && matches!(
-                app.diff().map(|s| s.layout),
-                Some(crate::diff::DiffLayout::Split)
-            )
-        {
-            needs_redraw = true;
-        }
 
         let current_title_filename = app.title_filename();
         if current_title_filename != last_title_filename.as_deref() {
@@ -174,11 +165,6 @@ pub(crate) fn run(
                 .and_then(|(_, started)| HISTORY_FLASH_DURATION.checked_sub(started.elapsed())),
             app.diff_flash()
                 .and_then(|(_, started)| FLASH_DURATION.checked_sub(started.elapsed())),
-            if app.has_pending_split_build() {
-                Some(Duration::from_millis(50))
-            } else {
-                None
-            },
             resize_timeout,
         ]
         .into_iter()

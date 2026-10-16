@@ -2,6 +2,36 @@ use ratatui::{
     style::{Color, Style},
     text::Span,
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthChar;
+
+pub(crate) use crate::markdown::width::rendered_span_width as span_width;
+
+pub(super) fn head_within_width(text: &str, max_width: usize) -> (&str, usize) {
+    let mut width = 0;
+    for (idx, grapheme) in text.grapheme_indices(true) {
+        let w = crate::markdown::width::rendered_cluster_width(grapheme);
+        if width + w > max_width {
+            return (&text[..idx], width);
+        }
+        width += w;
+    }
+    (text, width)
+}
+
+pub(super) fn char_index_at_col(text: &str, col: usize) -> Option<usize> {
+    let mut width = 0;
+    for (i, c) in text.chars().enumerate() {
+        if width == col {
+            return Some(i);
+        }
+        if width > col {
+            return None;
+        }
+        width += c.width().unwrap_or(0);
+    }
+    None
+}
 
 pub(super) fn truncate_left_half(
     spans: &mut Vec<Span<'static>>,
@@ -14,10 +44,7 @@ pub(super) fn truncate_left_half(
     if mid_idx <= preserve_end {
         return mid_idx;
     }
-    let frame_w: usize = spans[..preserve_end]
-        .iter()
-        .map(|s| s.content.chars().count())
-        .sum();
+    let frame_w: usize = spans[..preserve_end].iter().map(span_width).sum();
     let bg_style = |extra: Style| -> Style {
         if let Some(c) = bg {
             extra.bg(c)
@@ -37,21 +64,14 @@ pub(super) fn truncate_left_half(
     let mut cut_at = mid_idx;
     let mut boundary_keep: Option<Span<'static>> = None;
     for (k, s) in spans[preserve_end..mid_idx].iter().enumerate() {
-        let w = s.content.chars().count();
+        let w = span_width(s);
         if used + w > chars_before_ellipsis {
-            let keep_chars = chars_before_ellipsis - used;
+            let (head, head_width) = head_within_width(&s.content, chars_before_ellipsis - used);
             cut_at = preserve_end + k;
-            if keep_chars > 0 {
-                let content: &str = &s.content;
-                let split_byte = content
-                    .char_indices()
-                    .nth(keep_chars)
-                    .map(|(b, _)| b)
-                    .unwrap_or(content.len());
-                let head = content[..split_byte].to_string();
-                boundary_keep = Some(Span::styled(head, s.style));
+            if !head.is_empty() {
+                boundary_keep = Some(Span::styled(head.to_string(), s.style));
             }
-            used += keep_chars;
+            used += head_width;
             break;
         }
         used += w;
@@ -107,21 +127,14 @@ pub(crate) fn truncate_spans_tail(
     let mut cut_at = spans.len();
     let mut boundary_keep: Option<Span<'static>> = None;
     for (k, s) in spans[preserved_end..].iter().enumerate() {
-        let w = s.content.chars().count();
+        let w = span_width(s);
         if used + w > chars_before_ellipsis {
-            let keep_chars = chars_before_ellipsis - used;
+            let (head, head_width) = head_within_width(&s.content, chars_before_ellipsis - used);
             cut_at = preserved_end + k;
-            if keep_chars > 0 {
-                let content: &str = &s.content;
-                let split_byte = content
-                    .char_indices()
-                    .nth(keep_chars)
-                    .map(|(b, _)| b)
-                    .unwrap_or(content.len());
-                let head = content[..split_byte].to_string();
-                boundary_keep = Some(Span::styled(head, s.style));
+            if !head.is_empty() {
+                boundary_keep = Some(Span::styled(head.to_string(), s.style));
             }
-            used += keep_chars;
+            used += head_width;
             break;
         }
         used += w;
@@ -159,20 +172,14 @@ pub(crate) fn truncate_unified_body_row(
         return;
     }
 
-    let preserved_width: usize = spans[..preserved_end]
-        .iter()
-        .map(|s| s.content.chars().count())
-        .sum();
+    let preserved_width: usize = spans[..preserved_end].iter().map(span_width).sum();
 
     if preserved_width + 1 >= target_width {
         return;
     }
     let budget = target_width - 1 - preserved_width;
 
-    let tail_width: usize = spans[preserved_end..]
-        .iter()
-        .map(|s| s.content.chars().count())
-        .sum();
+    let tail_width: usize = spans[preserved_end..].iter().map(span_width).sum();
 
     if preserved_width + tail_width < target_width {
         return;

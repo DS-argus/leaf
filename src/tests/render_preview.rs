@@ -143,8 +143,12 @@ fn preview_submodule_single_column() {
         full.push('\n');
     }
     assert!(
-        !full.contains("submodule change"),
-        "preview must NOT show the removed `submodule change` note: {full:?}"
+        !full.contains("submodule change") && !full.contains("submodule commit change"),
+        "preview must NOT show a submodule change note: {full:?}"
+    );
+    assert!(
+        full.contains("bef0a93b4abf") && full.contains("381000237a5f"),
+        "preview must show the old and new subproject commits: {full:?}"
     );
     assert!(
         full.contains("subproject"),

@@ -1,4 +1,4 @@
-use super::{apply_split_build, App, DiffFlash};
+use super::{apply_split_build, App};
 use std::sync::Arc;
 
 impl App {
@@ -28,19 +28,21 @@ impl App {
         let Some(state) = self.diff_state.as_mut() else {
             return false;
         };
-        let target = state.layout.toggled();
-        if matches!(target, crate::diff::DiffLayout::Split) && !state.split_ready {
-            if self.pending_split_build.is_none() {
-                self.build_split_now(ss, theme);
-                if let Some(state) = self.diff_state.as_mut() {
-                    state.layout = target;
-                }
-                return true;
-            }
-            self.set_diff_flash(DiffFlash::SplitBuilding);
+        if state.preview_visible {
             return false;
         }
+        let target = state.layout.toggled();
+        if matches!(target, crate::diff::DiffLayout::Split) && !state.split_ready {
+            self.build_split_now(ss, theme);
+        }
+        let Some(state) = self.diff_state.as_mut() else {
+            return false;
+        };
+        let from = state.layout;
+        self.scroll = state.convert_scroll(from, target, self.scroll);
         state.layout = target;
+        self.clamp_scroll();
+        self.remap_diff_search_after_layout(from, target);
         true
     }
 
@@ -53,7 +55,7 @@ impl App {
             Some(s) => Arc::clone(&s.files),
             None => return false,
         };
-        let built = crate::render::build_split_lines(&files, ss, theme);
+        let built = crate::render::build_split_lines_with(&files, ss, theme, false);
         if let Some(state) = self.diff_state.as_mut() {
             apply_split_build(state, built);
         }
@@ -82,7 +84,7 @@ impl App {
         ss: &syntect::parsing::SyntaxSet,
         theme: &syntect::highlighting::Theme,
     ) -> bool {
-        let (next_idx, file, spec, need_build, restored_scroll) = {
+        let (next_idx, file, spec, need_build) = {
             let Some(state) = self.diff_state.as_mut() else {
                 return false;
             };
@@ -100,22 +102,20 @@ impl App {
             state.tree_active_idx = next;
             state.current_file_idx = next;
             let need_build = !state.preview_cache.contains_key(&next);
-            let restored = state.preview_scroll_cache.get(&next).copied().unwrap_or(0);
             (
                 next,
                 state.files[next].clone(),
                 state.spec.clone(),
                 need_build,
-                restored,
             )
         };
-        self.scroll = restored_scroll;
         if need_build {
             let pair = crate::app::build_preview_pair(&file, &spec, ss, theme);
             if let Some(state) = self.diff_state.as_mut() {
                 state.preview_cache.insert(next_idx, pair);
             }
         }
+        self.scroll = 0;
         self.clamp_scroll();
         true
     }
@@ -156,15 +156,11 @@ impl App {
                 } else {
                     restore
                 };
-                (Some(target), 0)
+                (Some(target), None)
             } else {
                 state.pre_preview_scroll = Some(self.scroll);
                 state.pre_preview_file_idx = Some(state.current_file_idx);
-                let restored = state
-                    .preview_scroll_cache
-                    .get(&active_idx)
-                    .copied()
-                    .unwrap_or(0);
+                let restored = state.preview_scroll_cache.get(&active_idx).copied();
                 (None, restored)
             };
             state.tree_active_idx = active_idx;
@@ -183,19 +179,27 @@ impl App {
             )
         };
 
-        if new_visible {
-            self.scroll = open_scroll;
-        } else if let Some(target) = close_target {
-            self.scroll = target;
-        }
-
         if let Some((file, spec)) = build_inputs {
             let pair = crate::app::build_preview_pair(&file, &spec, ss, theme);
             if let Some(state) = self.diff_state.as_mut() {
                 state.preview_cache.insert(active_idx, pair);
             }
         }
+        if new_visible {
+            self.scroll =
+                open_scroll.unwrap_or_else(|| self.preview_first_change_scroll(active_idx));
+        } else if let Some(target) = close_target {
+            self.scroll = target;
+        }
         self.clamp_scroll();
         true
+    }
+
+    fn preview_first_change_scroll(&self, file_idx: usize) -> usize {
+        const CONTEXT_ROWS: usize = 3;
+        self.diff_state
+            .as_ref()
+            .and_then(|state| state.preview_cache.get(&file_idx))
+            .map_or(0, |pair| pair.first_change_row.saturating_sub(CONTEXT_ROWS))
     }
 }

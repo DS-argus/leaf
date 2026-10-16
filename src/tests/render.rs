@@ -945,3 +945,23 @@ fn build_diff_lines_renders_nested_submodule_note() {
         "expected nested file path in render: {joined:?}"
     );
 }
+
+#[test]
+fn unified_shows_one_no_newline_note_per_hunk() {
+    let (ss, theme) = test_assets();
+    let src =
+        "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n\
+               +new\n\\ No newline at end of file\n";
+    let files = crate::diff::parse_unified_diff(src);
+    let built = crate::render::build_diff_lines(&files, &ss, &theme);
+    let notes = built
+        .lines
+        .iter()
+        .filter(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.content.contains("No newline at end of file"))
+        })
+        .count();
+    assert_eq!(notes, 1);
+}
