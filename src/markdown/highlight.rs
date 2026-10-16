@@ -3,7 +3,8 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
-use std::{borrow::Cow, ops::Range};
+use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::width;
 use super::with_link_marker;
@@ -46,8 +47,10 @@ pub(super) fn content_span_start(spans: &[Span<'_>]) -> usize {
     0
 }
 
-pub(super) fn overlapping_ranges(ranges: &[Range<usize>], start: usize, end: usize) -> bool {
-    ranges.iter().any(|r| r.start < end && r.end > start)
+fn skip_ranges_ending_by(ranges: &[Range<usize>], index: &mut usize, pos: usize) {
+    while ranges.get(*index).is_some_and(|range| range.end <= pos) {
+        *index += 1;
+    }
 }
 
 pub(crate) fn highlight_line<'a>(line: &Line<'a>, theme: &MarkdownTheme, query: &str) -> Line<'a> {
@@ -85,6 +88,7 @@ fn highlight_line_with_marker<'a>(
     }
 
     let mut char_offset: usize = 0;
+    let mut range_index = 0;
     for span in &spans[content_start..] {
         if span.content.as_ref() == marker {
             result.push(span.clone());
@@ -94,37 +98,46 @@ fn highlight_line_with_marker<'a>(
         let span_end = char_offset + span_len;
         let base_style = span.style.bg(line_bg);
 
-        if !overlapping_ranges(&ranges, char_offset, span_end) {
+        skip_ranges_ending_by(&ranges, &mut range_index, char_offset);
+        if ranges
+            .get(range_index)
+            .is_none_or(|range| range.start >= span_end)
+        {
             result.push(Span::styled(span.content.clone(), base_style));
             char_offset = span_end;
             continue;
         }
 
-        let span_chars: Vec<char> = span.content.chars().collect();
-        let mut pos = 0;
-        for range in &ranges {
-            if range.end <= char_offset || range.start >= span_end {
-                continue;
+        let match_style = span.style.patch(match_style_extra);
+        let content = span.content.as_ref();
+        let mut push_run = |text: &str, run_match: Option<usize>| {
+            if !text.is_empty() {
+                let style = if run_match.is_some() {
+                    match_style
+                } else {
+                    base_style
+                };
+                result.push(Span::styled(text.to_string(), style));
             }
-            let local_start = range.start.saturating_sub(char_offset);
-            let local_end = (range.end - char_offset).min(span_len);
-
-            if local_start > pos {
-                let text: String = span_chars[pos..local_start].iter().collect();
-                result.push(Span::styled(Cow::Owned(text), base_style));
+        };
+        let mut run_start = 0;
+        let mut run_match = None;
+        let mut pos = char_offset;
+        for (idx, grapheme) in content.grapheme_indices(true) {
+            let end = pos + grapheme.chars().count();
+            skip_ranges_ending_by(&ranges, &mut range_index, pos);
+            let grapheme_match = ranges
+                .get(range_index)
+                .is_some_and(|range| range.start < end)
+                .then_some(range_index);
+            if grapheme_match != run_match {
+                push_run(&content[run_start..idx], run_match);
+                run_start = idx;
+                run_match = grapheme_match;
             }
-            let text: String = span_chars[local_start..local_end].iter().collect();
-            result.push(Span::styled(
-                Cow::Owned(text),
-                span.style.patch(match_style_extra),
-            ));
-            pos = local_end;
+            pos = end;
         }
-        if pos < span_len {
-            let text: String = span_chars[pos..].iter().collect();
-            result.push(Span::styled(Cow::Owned(text), base_style));
-        }
-
+        push_run(&content[run_start..], run_match);
         char_offset = span_end;
     }
 

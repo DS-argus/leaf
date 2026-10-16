@@ -98,6 +98,7 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    app.refresh_screen_geometry(&visible_lines, content_area.width, content_area.height);
     f.render_widget(
         Paragraph::new(visible_lines)
             .style(Style::default().bg(theme.ui.content_bg))
@@ -140,7 +141,7 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }
 
-fn inner_content_area(area: Rect) -> Rect {
+pub(crate) fn inner_content_area(area: Rect) -> Rect {
     Rect {
         x: area.x.saturating_add(CONTENT_HORIZONTAL_PADDING),
         y: area.y,
