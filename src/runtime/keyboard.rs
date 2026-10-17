@@ -104,6 +104,7 @@ pub(super) fn handle_key_event(
             || app.is_goto_line_mode()
             || (app.is_file_picker_open() && app.is_fuzzy_file_picker());
         if !in_text_input {
+            app.exit_link_select_mode();
             let now_enabled = app.toggle_mouse_capture();
             if now_enabled {
                 execute!(terminal.backend_mut(), EnableMouseCapture)?;
@@ -403,16 +404,12 @@ pub(super) fn handle_key_event(
     } else {
         let mut mode_exited = false;
 
-        if app.mode() == crate::app::AppMode::Document {
-            if app.is_code_select_mode() {
-                let mode_handled = super::code_select_keys::handle_code_select_key(app, &key);
-                if mode_handled {
-                    return Ok(HandleResult::Continue { redraw: true });
-                }
-                mode_exited = app.exit_code_select_mode();
-            } else if super::code_select_keys::try_code_select_entry(app, &key) {
+        match handle_select_mode_keys(app, &key) {
+            SelectModeOutcome::Consumed => {
                 return Ok(HandleResult::Continue { redraw: true });
             }
+            SelectModeOutcome::Exited => mode_exited = true,
+            SelectModeOutcome::Inactive => {}
         }
 
         match handle_shared_keys(terminal, app, &key, ss, themes)? {
@@ -438,6 +435,41 @@ pub(super) fn handle_key_event(
     Ok(HandleResult::Continue {
         redraw: state_changed,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectModeOutcome {
+    Consumed,
+    Exited,
+    Inactive,
+}
+
+pub(crate) fn handle_select_mode_keys(app: &mut App, key: &KeyEvent) -> SelectModeOutcome {
+    if app.mode() != crate::app::AppMode::Document {
+        return SelectModeOutcome::Inactive;
+    }
+    let exited = if app.is_link_select_mode() {
+        if super::link_select_keys::handle_link_select_key(app, key) {
+            return SelectModeOutcome::Consumed;
+        }
+        app.exit_link_select_mode()
+    } else if app.is_code_select_mode() {
+        if super::code_select_keys::handle_code_select_key(app, key) {
+            return SelectModeOutcome::Consumed;
+        }
+        app.exit_code_select_mode()
+    } else {
+        false
+    };
+    if super::link_select_keys::try_link_select_entry(app, key)
+        || super::code_select_keys::try_code_select_entry(app, key)
+    {
+        SelectModeOutcome::Consumed
+    } else if exited {
+        SelectModeOutcome::Exited
+    } else {
+        SelectModeOutcome::Inactive
+    }
 }
 
 enum SharedOutcome {

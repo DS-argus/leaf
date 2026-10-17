@@ -13,6 +13,7 @@ use syntect::{
 
 mod app;
 mod app_code_blocks;
+mod app_link_selection;
 mod app_mode;
 mod app_mode_diff_integration;
 mod common;

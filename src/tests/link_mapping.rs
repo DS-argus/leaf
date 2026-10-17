@@ -1,41 +1,12 @@
-use super::{lock_theme_test_state, test_assets, test_md_theme};
-use crate::app::{App, AppConfig};
-use crate::markdown::parse_markdown_with_width;
-use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+use super::common::app_helpers::{
+    draw_app as draw, markdown_app, parse_markdown_for_test, sync_app_width,
+};
+use super::{lock_theme_test_state, test_assets};
+use crate::app::App;
+use ratatui::{backend::TestBackend, Terminal};
 
 fn app_for(source: &str, parse_width: usize) -> App {
-    let (ss, theme) = test_assets();
-    let parsed = parse_markdown_with_width(
-        source,
-        &ss,
-        &theme,
-        parse_width,
-        &test_md_theme(),
-        false,
-        true,
-    );
-    let mut app = App::new_with_source(
-        Vec::new(),
-        Vec::new(),
-        AppConfig {
-            filename: "mapping.md".into(),
-            source: source.into(),
-            debug_input: false,
-            watch: false,
-            filepath: None,
-            last_file_state: None,
-        },
-    );
-    app.replace_content(parsed);
-    app
-}
-
-fn draw(app: &mut App, width: u16, height: u16) -> Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| crate::render::ui(frame, app))
-        .unwrap();
-    terminal.backend().buffer().clone()
+    markdown_app(source, parse_width, "mapping.md", None)
 }
 
 fn destination(app: &App, x: u16, y: u16) -> Option<&str> {
@@ -74,10 +45,8 @@ Refs[^n] [Last](https://last.test).
 ";
 
 fn sync_width(app: &mut App, width: u16, height: u16) {
-    let (ss, _) = test_assets();
-    let ts = syntect::highlighting::ThemeSet::load_defaults();
     draw(app, width, height);
-    crate::runtime::sync_render_width_for_app(width, app, &ss, &ts);
+    sync_app_width(app, width);
 }
 
 fn inner_columns(app: &App) -> (u16, u16) {
@@ -347,16 +316,7 @@ fn replacing_content_invalidates_old_screen_hit_regions() {
     draw(&mut app, 63, 8);
     assert_eq!(destination(&app, 2, 0), Some("https://a.test"));
     assert_eq!(app.line_idx_at(2, 0), Some(0));
-    let (ss, theme) = test_assets();
-    app.replace_content(parse_markdown_with_width(
-        "no links",
-        &ss,
-        &theme,
-        60,
-        &test_md_theme(),
-        false,
-        true,
-    ));
+    app.replace_content(parse_markdown_for_test("no links", 60));
     assert_eq!(destination(&app, 2, 0), None);
     assert_eq!(app.line_idx_at(2, 0), None);
 }

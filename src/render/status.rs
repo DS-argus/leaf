@@ -4,6 +4,7 @@ use crate::{
         App, AppMode, CodeBlockFlash, DiffFlash, DiffSource, EditorFlash, HistoryFlash, LinkFlash,
         PathFlash, WatchFlash, FLASH_DURATION_MS,
     },
+    markdown::{truncate_display_width, width::rendered_span_width},
     theme::app_theme,
 };
 use ratatui::{
@@ -174,7 +175,9 @@ pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> 
 }
 
 pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
-    if app.is_goto_line_mode() || app.is_search_mode() {
+    if app.is_link_select_mode() {
+        &["x/X next/prev", "enter copy", "ctrl+o open", "esc cancel"]
+    } else if app.is_goto_line_mode() || app.is_search_mode() {
         &["enter confirm", "esc cancel"]
     } else if app.has_active_goto_line() {
         &["esc cancel"]
@@ -260,6 +263,7 @@ fn link_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
     let (text, fg) = match flash {
         LinkFlash::Copied => (" Copied to clipboard ", theme.ui.status_success_fg),
         LinkFlash::CopyFailed => (clipboard_hint(), theme.ui.status_error_fg),
+        LinkFlash::NoneVisible => (" No link in view ", theme.ui.status_error_fg),
     };
     Some(vec![Span::styled(text, Style::default().fg(fg).bg(bar_bg))])
 }
@@ -338,8 +342,34 @@ fn path_flash_section(app: &App) -> Option<Vec<Span<'static>>> {
     Some(vec![Span::styled(text, Style::default().fg(fg).bg(bar_bg))])
 }
 
+fn link_select_status(app: &App, destination: &str, bar_bg: Color) -> Vec<Span<'static>> {
+    let width = usize::from(app.terminal_width);
+    let brand = status_brand_section();
+    let mut left = brand.clone();
+    left.extend(status_filename_section(destination));
+    let full = join_span_sections(
+        vec![left, status_shortcuts_section(app, bar_bg)],
+        Span::raw(" "),
+    );
+    if spans_width(&full) <= width {
+        return full;
+    }
+    let chrome = spans_width(&brand) + spans_width(&status_filename_section(""));
+    let destination = truncate_display_width(destination, width.saturating_sub(chrome));
+    let mut left = brand;
+    left.extend(status_filename_section(&destination));
+    left
+}
+
+fn spans_width(spans: &[Span]) -> usize {
+    spans.iter().map(rendered_span_width).sum()
+}
+
 pub(crate) fn build_status_bar(app: &App, pct: u16) -> Vec<Span<'static>> {
     let bar_bg = status_bar_bg();
+    if let Some(destination) = app.selected_link_url() {
+        return link_select_status(app, destination, bar_bg);
+    }
     let outer_separator = Span::raw(" ");
 
     if !app.is_mouse_capture_enabled() {

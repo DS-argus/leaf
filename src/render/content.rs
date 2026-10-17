@@ -1,11 +1,16 @@
-use crate::{app::App, markdown::width::rendered_span_width, theme::app_theme};
+use crate::{
+    app::App,
+    markdown::{width::rendered_span_width, LinkId, LinkSpan},
+    theme::app_theme,
+};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Span,
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
+use std::collections::HashMap;
 
 use super::{CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH};
 
@@ -34,25 +39,31 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    let hovered_id = app.hovered_link.and_then(|(line, index)| {
-        app.link_spans_by_line
-            .get(&line)?
-            .get(index)
-            .map(|link| link.link_id)
-    });
+    let hovered_id = app
+        .hovered_link
+        .and_then(|(line, index)| app.link_span(line, index))
+        .map(|link| link.link_id);
     if let Some(id) = hovered_id {
-        for (offset, line) in visible_lines.iter_mut().enumerate() {
-            if let Some(ranges) = app.link_spans_by_line.get(&(scroll + offset)) {
-                for link in ranges.iter().filter(|link| link.link_id == id) {
-                    apply_hover_style(
-                        line,
-                        link.start_col,
-                        link.end_col,
-                        theme.markdown.link_hover,
-                    );
-                }
-            }
-        }
+        style_link_occurrence(
+            &mut visible_lines,
+            &app.link_spans_by_line,
+            scroll,
+            id,
+            Style::default().fg(theme.markdown.link_hover),
+        );
+    }
+
+    if let Some(id) = app.selected_link() {
+        style_link_occurrence(
+            &mut visible_lines,
+            &app.link_spans_by_line,
+            scroll,
+            id,
+            Style::default()
+                .fg(theme.markdown.link_text)
+                .bg(theme.ui.content_bg)
+                .add_modifier(Modifier::REVERSED),
+        );
     }
 
     if let Some(block_idx) = app.highlighted_code_block() {
@@ -185,18 +196,34 @@ fn apply_code_block_highlight(
     }
 }
 
-fn apply_hover_style(
+fn style_link_occurrence(
+    lines: &mut [ratatui::text::Line<'static>],
+    spans_by_line: &HashMap<usize, Vec<LinkSpan>>,
+    first_line: usize,
+    id: LinkId,
+    style: Style,
+) {
+    for (offset, line) in lines.iter_mut().enumerate() {
+        if let Some(ranges) = spans_by_line.get(&(first_line + offset)) {
+            for link in ranges.iter().filter(|link| link.link_id == id) {
+                apply_link_style(line, link.start_col, link.end_col, style);
+            }
+        }
+    }
+}
+
+fn apply_link_style(
     line: &mut ratatui::text::Line<'static>,
     start_col: usize,
     end_col: usize,
-    hover_color: Color,
+    style: Style,
 ) {
     let mut col = 0usize;
     for span in &mut line.spans {
         let w = rendered_span_width(span);
         let span_end = col + w;
         if span_end > start_col && col < end_col {
-            span.style = span.style.fg(hover_color);
+            span.style = span.style.patch(style);
         }
         col = span_end;
     }

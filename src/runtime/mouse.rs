@@ -1,6 +1,6 @@
 use crate::{
-    app::{App, EditorFlash, LinkFlash, PathKind},
-    clipboard::{copy_to_clipboard, open_url},
+    app::{App, EditorFlash, PathKind},
+    clipboard::copy_to_clipboard,
     editor::{self, classify, open_in_editor, split_editor_cmd, EditorResult},
     render::{inner_content_area, SCROLLBAR_WIDTH},
     terminal::TerminalSession,
@@ -14,6 +14,15 @@ use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 use super::DOUBLE_CLICK_THRESHOLD;
 
 pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
+    handle_mouse_event_with(app, mouse, copy_to_clipboard, super::open_url_in_background)
+}
+
+pub(crate) fn handle_mouse_event_with(
+    app: &mut App,
+    mouse: MouseEvent,
+    copy_link: impl FnOnce(&str) -> bool,
+    open_link: impl FnOnce(&str),
+) -> bool {
     let prev_pos = app.mouse_position;
     app.mouse_position = (mouse.column, mouse.row);
     let state_changed = if app.is_path_popup_open() {
@@ -66,6 +75,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
     } else {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
+                app.exit_link_select_mode();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_up(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -81,6 +91,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 true
             }
             MouseEventKind::ScrollDown => {
+                app.exit_link_select_mode();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_down(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -145,34 +156,15 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         ),
                     );
                 }
-                if let Some(destination) = link_hit.and_then(|link| app.link_url(link.link_id)) {
-                    let is_internal = destination.starts_with('#');
+                if let Some(id) = link_hit
+                    .map(|link| link.link_id)
+                    .filter(|&id| app.link_url(id).is_some())
+                {
                     if mouse.modifiers.contains(KeyModifiers::CONTROL) {
-                        if is_internal {
-                            if let Some(path) = app.filepath() {
-                                let p = path.to_path_buf();
-                                std::thread::spawn(move || {
-                                    open_url(&p.display().to_string());
-                                });
-                            }
-                        } else {
-                            let url = destination.to_owned();
-                            std::thread::spawn(move || {
-                                open_url(&url);
-                            });
-                        }
+                        app.open_link_with(id, open_link);
                         true
                     } else if is_double_click || mouse.modifiers.contains(KeyModifiers::ALT) {
-                        let text = if is_internal {
-                            app.filename().to_string()
-                        } else {
-                            destination.to_owned()
-                        };
-                        if copy_to_clipboard(&text) {
-                            app.set_link_flash(LinkFlash::Copied);
-                        } else {
-                            app.set_link_flash(LinkFlash::CopyFailed);
-                        }
+                        app.copy_link_with(id, copy_link);
                         app.last_click = None;
                         true
                     } else {
@@ -193,6 +185,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                         None
                     };
                     if let Some(block_idx) = block_hit {
+                        app.exit_link_select_mode();
                         app.code_select = Some(block_idx);
                         app.copy_code_block_at(block_idx);
                         app.last_click = None;

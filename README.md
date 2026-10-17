@@ -398,13 +398,13 @@ leaf --theme rose-pine README.md
 | `1-9` / `0+1-9` | Jump / reverse jump (TOC) | `Shift+M` | Toggle mouse capture |
 | `J/K` / `U/D` | Navigate TOC | `Ctrl+P` | Open fuzzy picker |
 | `y/Y` / `c/C` | Focus code block | `Ctrl+H` | Open file history picker |
-| `Ctrl+L` / `:` | Go to line | `Ctrl+E` | Open in editor |
-| `Ctrl+F` / `/` | Find | `Ctrl+Click` | Open link |
-| `n` / `N` | Next / prev match | `Double-Click` (link) | Copy link |
-| `w` | Toggle watch mode | `Double-Click` (code) | Copy code block |
-| `r` | Force reload (watch mode) | `Shift+Drag` | Select text |
-| `t` | Toggle TOC sidebar | `Option+Drag` | Select text (iTerm2) |
-| `q` | Quit |  |  |
+| `x/X` | Focus link | `Ctrl+E` | Open in editor |
+| `Ctrl+L` / `:` | Go to line | `Ctrl+F` / `/` | Find |
+| `n` / `N` | Next / prev match | `Ctrl+Click` | Open link |
+| `w` | Toggle watch mode | `Double-Click` (link) | Copy link |
+| `r` | Force reload (watch mode) | `Double-Click` (code) | Copy code block |
+| `t` | Toggle TOC sidebar | `Shift+Drag` | Select text |
+| `q` | Quit | `Option+Drag` | Select text (iTerm2) |
 
 ## Features
 
@@ -422,7 +422,7 @@ leaf --theme rose-pine README.md
 - **Line numbers** : *Toggle display with `Shift+L`, jump to a line with `Ctrl+L` or `:`*.
 - **LaTeX support** : *Inline, block, and `latex` / `tex` code blocks rendered as formulas*.
 - **Mermaid diagrams** : *`mermaid` code blocks rendered as ASCII diagrams*.
-- **Clickable links** : *`Ctrl+Click` to open, double-click to copy, hover feedback*.
+- **Clickable links** : *`Ctrl+Click` to open, double-click to copy, keyboard focus with `x/X`*.
 - **Code block interactions** : *Focus and copy with `y/Y` / `c/C`, or double-click on a block*.
 - **Mouse capture** : *`Shift+M` to toggle mouse capture and let the terminal handle selection*.
 - **Navigation** : *TOC sidebar, active section tracking, heading jumps, and search*.

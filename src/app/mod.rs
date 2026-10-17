@@ -2,7 +2,7 @@ use crate::{
     markdown::{
         build_searchable_lines,
         toc::{toc_levels, TocEntry},
-        CodeBlockInfo, LinkSpan,
+        CodeBlockInfo, LinkId, LinkSpan,
     },
     render::{build_status_bar, build_toc_line_with_index, toc_header_line},
     theme::{app_theme, current_theme_selection, theme_preset_index},
@@ -102,6 +102,8 @@ impl TocScrollMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StatusCacheKey {
     pct: u16,
+    link_select: Option<LinkId>,
+    terminal_width: u16,
     search_mode: bool,
     search_draft_hash: u64,
     search_query_hash: u64,
@@ -216,6 +218,7 @@ pub(crate) struct App {
     pub(crate) hovered_link: Option<(usize, usize)>,
     pub(crate) code_blocks: Vec<CodeBlockInfo>,
     pub(crate) code_select: Option<usize>,
+    link_select: Option<LinkId>,
     code_block_flash: Option<(CodeBlockFlash, Instant)>,
     link_flash: Option<(LinkFlash, Instant)>,
     path_flash: Option<(PathFlash, Instant)>,
@@ -404,6 +407,7 @@ impl App {
             hovered_link: None,
             code_blocks: Vec::new(),
             code_select: None,
+            link_select: None,
             code_block_flash: None,
             link_flash: None,
             path_flash: None,
@@ -829,6 +833,8 @@ impl App {
     pub(crate) fn refresh_status_cache(&mut self, pct: u16) {
         let cache_key = StatusCacheKey {
             pct,
+            link_select: self.link_select,
+            terminal_width: self.terminal_width,
             search_mode: self.search.mode,
             search_draft_hash: self.search.draft_hash,
             search_query_hash: self.search.query_hash,

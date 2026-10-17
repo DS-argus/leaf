@@ -1,6 +1,7 @@
 mod code_select_keys;
 mod diff_keys;
 mod keyboard;
+mod link_select_keys;
 mod mouse;
 
 use crate::{
@@ -19,6 +20,12 @@ use std::{
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
 use keyboard::{handle_key_event, HandleResult};
+#[cfg(test)]
+pub(crate) use keyboard::{handle_select_mode_keys, SelectModeOutcome};
+#[cfg(test)]
+pub(crate) use link_select_keys::handle_link_select_key_with;
+#[cfg(test)]
+pub(crate) use mouse::handle_mouse_event_with;
 
 const EDITOR_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
 const WATCH_FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
@@ -33,6 +40,13 @@ const MOUSE_SCROLL_STEP: usize = 3;
 
 pub(crate) fn should_handle_key(kind: KeyEventKind) -> bool {
     !matches!(kind, KeyEventKind::Release)
+}
+
+fn open_url_in_background(url: &str) {
+    let url = url.to_owned();
+    std::thread::spawn(move || {
+        crate::clipboard::open_url(&url);
+    });
 }
 
 pub(crate) fn debug_log(enabled: bool, message: &str) {
@@ -238,9 +252,7 @@ pub(crate) fn run(
                     }
                 }
                 Event::Resize(_, _) => {
-                    if app.exit_code_select_mode() {
-                        needs_redraw = true;
-                    }
+                    needs_redraw |= app.exit_code_select_mode() | app.exit_link_select_mode();
                     pending_resize = Some(Instant::now());
                 }
                 _ => {}
